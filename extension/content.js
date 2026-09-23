@@ -598,7 +598,41 @@
     return request;
   }
 
+  let audioCtx = null;
+  function getAudioContext() {
+    try {
+      if (!audioCtx && (window.AudioContext || window.webkitAudioContext)) {
+        const Ctx = window.AudioContext || window.webkitAudioContext;
+        audioCtx = new Ctx();
+      }
+      if (audioCtx && audioCtx.state === 'suspended') {
+        audioCtx.resume().catch(() => {});
+      }
+      return audioCtx;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  function dataUrlToBlob(dataUrl) {
+    if (typeof atob === 'undefined' || typeof Blob === 'undefined') return null;
+    const parts = dataUrl.split(',');
+    if (parts.length < 2) return null;
+    const mime = (parts[0].match(/:(.*?);/) || [])[1] || 'audio/mp3';
+    const bstr = atob(parts[1]);
+    let n = bstr.length;
+    const u8arr = new Uint8Array(n);
+    while (n--) {
+      u8arr[n] = bstr.charCodeAt(n);
+    }
+    return new Blob([u8arr], { type: mime });
+  }
+
   function stopCurrentAudioOnly() {
+    if (state.activeSourceNode) {
+      try { state.activeSourceNode.stop(); } catch (_) {}
+      state.activeSourceNode = null;
+    }
     if (state.audioElement) {
       state.audioElement.onplay = null;
       state.audioElement.onended = null;
@@ -624,13 +658,73 @@
 
   function playAudioUrl(url, text, seqId, isBlobUrl, offset = 0) {
     if (state.sequenceId !== seqId) return;
-    const audio = new Audio(url);
-    state.audioElement = audio;
-    audio.playbackRate = state.speed;
+
+    let playableUrl = url;
+    let createdBlobUrl = false;
+    let rawBlob = null;
+
+    if (url && typeof url === 'string' && url.startsWith('data:')) {
+      try {
+        rawBlob = dataUrlToBlob(url);
+        if (rawBlob && typeof URL !== 'undefined' && URL.createObjectURL) {
+          playableUrl = URL.createObjectURL(rawBlob);
+          createdBlobUrl = true;
+        }
+      } catch (_) {
+        playableUrl = url;
+      }
+    }
 
     const cleanup = () => {
-      if (isBlobUrl) URL.revokeObjectURL(url);
+      if (createdBlobUrl || isBlobUrl) {
+        try { if (typeof URL !== 'undefined' && URL.revokeObjectURL) URL.revokeObjectURL(playableUrl); } catch (_) {}
+      }
     };
+
+    const tryWebAudioFallback = async () => {
+      try {
+        const ctx = getAudioContext();
+        if (!ctx) return false;
+        if (ctx.state === 'suspended') await ctx.resume();
+        let arrayBuf = null;
+        if (rawBlob && rawBlob.arrayBuffer) {
+          arrayBuf = await rawBlob.arrayBuffer();
+        } else if (url && url.startsWith('data:') && typeof atob !== 'undefined') {
+          const bstr = atob(url.split(',')[1]);
+          const u8arr = new Uint8Array(bstr.length);
+          for (let i = 0; i < bstr.length; i++) u8arr[i] = bstr.charCodeAt(i);
+          arrayBuf = u8arr.buffer;
+        } else if (typeof fetch !== 'undefined') {
+          const res = await fetch(url);
+          arrayBuf = await res.arrayBuffer();
+        }
+        if (!arrayBuf) return false;
+
+        const audioBuffer = await ctx.decodeAudioData(arrayBuf);
+        const source = ctx.createBufferSource();
+        source.buffer = audioBuffer;
+        source.playbackRate.value = state.speed;
+        source.connect(ctx.destination);
+        source.onended = () => {
+          cleanup();
+          if (state.sequenceId !== seqId) return;
+          if (state.wordTimer) clearInterval(state.wordTimer);
+          onSentenceFinished();
+        };
+        source.start(0);
+        state.activeSourceNode = source;
+        startWordTimer(text, { currentTime: 0, duration: audioBuffer.duration }, offset);
+        updatePillUI();
+        return true;
+      } catch (err) {
+        console.warn('[GuyReader] Web Audio fallback failed:', err);
+        return false;
+      }
+    };
+
+    const audio = new Audio(playableUrl);
+    state.audioElement = audio;
+    audio.playbackRate = state.speed;
 
     audio.onplay = () => {
       if (state.sequenceId !== seqId || state.isPaused) {
@@ -649,10 +743,13 @@
       onSentenceFinished();
     };
 
-    audio.onerror = (e) => {
+    audio.onerror = async (e) => {
+      console.warn("Audio element error, attempting Web Audio fallback:", e);
+      const recovered = await tryWebAudioFallback();
+      if (recovered) return;
+
       cleanup();
       if (state.sequenceId !== seqId) return;
-      console.warn("Audio element error:", e);
       if (isHebrew(text)) {
         console.warn('[GuyReader] Hebrew audio error; Carmit fallback blocked.');
         onSentenceFinished();
@@ -663,9 +760,12 @@
 
     const playPromise = state.isPaused ? undefined : audio.play();
     if (playPromise !== undefined) {
-      playPromise.catch((err) => {
+      playPromise.catch(async (err) => {
         if (state.sequenceId !== seqId) return;
-        console.warn("Autoplay policy prevented audio.play():", err);
+        console.warn("Autoplay policy prevented audio.play(), trying Web Audio:", err);
+        const recovered = await tryWebAudioFallback();
+        if (recovered) return;
+
         cleanup();
         showFloatingPill();
         state.isPlaying = false;
@@ -816,6 +916,7 @@
       if (state.isPlaying || state.isPaused) playSentence(Math.max(0, state.currentIndex), false, state.wordOffset);
     });
     document.getElementById('guy-btn-play').addEventListener('click', () => {
+      getAudioContext();
       if (state.isPlaying) pauseReading();
       else resumeReading();
     });

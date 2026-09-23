@@ -139,6 +139,17 @@ async function synthesizeEdgeTTS(text, voiceName = 'edge-he-avri', rate = 1.0) {
   });
 }
 
+function uint8ArrayToBase64(bytes) {
+  let binary = '';
+  const len = bytes.byteLength;
+  const chunkSize = 8192;
+  for (let i = 0; i < len; i += chunkSize) {
+    const chunk = bytes.subarray(i, Math.min(i + chunkSize, len));
+    binary += String.fromCharCode.apply(null, chunk);
+  }
+  return btoa(binary);
+}
+
 function chunksToBase64DataUrl(chunks) {
   let totalLen = 0;
   for (const c of chunks) totalLen += c.byteLength;
@@ -148,13 +159,7 @@ function chunksToBase64DataUrl(chunks) {
     merged.set(c, offset);
     offset += c.byteLength;
   }
-
-  let binary = '';
-  const len = merged.byteLength;
-  for (let i = 0; i < len; i++) {
-    binary += String.fromCharCode(merged[i]);
-  }
-  return `data:audio/mp3;base64,${btoa(binary)}`;
+  return `data:audio/mp3;base64,${uint8ArrayToBase64(merged)}`;
 }
 
 function escapeXml(unsafe) {
@@ -197,12 +202,8 @@ async function synthesizeLocal(text, voice, speed = 1.0) {
         if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
         const buffer = await resp.arrayBuffer();
         const bytes = new Uint8Array(buffer);
-        let binary = '';
-        for (let i = 0; i < bytes.byteLength; i++) {
-          binary += String.fromCharCode(bytes[i]);
-        }
         const mimeType = (bytes[0] === 0x52 && bytes[1] === 0x49) ? 'audio/wav' : 'audio/mp3';
-        const dataUrl = `data:${mimeType};base64,${btoa(binary)}`;
+        const dataUrl = `data:${mimeType};base64,${uint8ArrayToBase64(bytes)}`;
         return dataUrl;
       });
 }
