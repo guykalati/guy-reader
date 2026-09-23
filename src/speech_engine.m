@@ -181,6 +181,10 @@ static NSString *GenerateSecMsGec(void) {
     if (isHebrewText) {
         NSString *hebVoice = [self isHebrewVoice:voiceName] ? voiceName : @"edge-he-avri";
         self.currentVoice = hebVoice;
+        if ([hebVoice containsString:@"roboshaul"] || [hebVoice containsString:@"shaul"]) {
+            [self synthesizeViaLocalBridgeForText:text voice:hebVoice rate:rate sentenceId:mySentenceId];
+            return;
+        }
         [self speakEdgeTTS:text voice:hebVoice rate:rate];
         return;
     }

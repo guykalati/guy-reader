@@ -431,7 +431,7 @@
     if (index < 0 || index >= state.sentences.length || state.prebufferCache.has(index)) return;
     const text = state.sentences[index];
     const voice = voiceForSentence(text);
-    if (!/^(af_|am_|edge-)/.test(voice)) return;
+    if (!/^(af_|am_|edge-|he-roboshaul|roboshaul)/.test(voice)) return;
     const generation = state.generation;
     try {
       const url = await requestAudio(text, voice, generation);

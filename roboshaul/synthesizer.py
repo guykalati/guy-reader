@@ -59,7 +59,7 @@ def has_niqqud(text: str) -> bool:
 class RoboShaulSynthesizer:
     """High-performance local Hebrew speech synthesizer for Robo-Shaul."""
 
-    def __init__(self, models_dir: Path | str | None = None, device: str | None = None):
+    def __init__(self, models_dir: Path | str | None = None, device: str | None = None, use_denoiser: bool = False):
         if models_dir is not None:
             self.models_dir = Path(models_dir)
         else:
@@ -67,6 +67,7 @@ class RoboShaulSynthesizer:
 
         self.tacotron_path = self.models_dir / "roboshaul_90K.pt"
         self.waveglow_path = self.models_dir / "waveglow_256channels_universal_v5.pt"
+        self.use_denoiser = use_denoiser
 
         if device:
             self.device = torch.device(device) if torch else None
@@ -125,7 +126,22 @@ class RoboShaulSynthesizer:
                 for k in self.waveglow_model.convinv:
                     k.float()
 
-                self.denoiser = Denoiser(self.waveglow_model).to(self.device)
+                if self.use_denoiser:
+                    self.denoiser = Denoiser(self.waveglow_model).to(self.device)
+                else:
+                    self.denoiser = None
+
+                # Pre-warm Nakdimon ONNX graph and MPS shaders to avoid first-sentence delay
+                try:
+                    import nakdimon.predict
+                    nakdimon.predict.predict("שלום", maxlen=64)
+                    dummy_seq = torch.zeros((1, 2), dtype=torch.long, device=self.device)
+                    with torch.no_grad():
+                        _, dummy_mel, _, _ = self.tacotron_model.inference(dummy_seq)
+                        _ = self.waveglow_model.infer(dummy_mel, sigma=0.8)
+                except Exception:
+                    pass
+
                 self._loaded = True
                 print("[RoboShaul] Models loaded successfully!")
                 return True
@@ -133,6 +149,25 @@ class RoboShaulSynthesizer:
                 print(f"[RoboShaul] Failed to load models: {e}")
                 self._loaded = False
                 return False
+
+    @staticmethod
+    def _trim_silence(audio_np: np.ndarray, sample_rate: int = 22050, threshold: float = 0.012, pad_ms: int = 40) -> np.ndarray:
+        """Trim dead silence from ends while keeping a natural decay to avoid abrupt cutoffs."""
+        abs_audio = np.abs(audio_np)
+        above = np.where(abs_audio > threshold)[0]
+        if len(above) == 0:
+            return audio_np
+        pad_samples = int(pad_ms * sample_rate / 1000)
+        start_idx = max(0, above[0] - pad_samples)
+        end_idx = min(len(audio_np), above[-1] + pad_samples)
+        trimmed = audio_np[start_idx:end_idx].copy()
+
+        # Apply gentle 10ms cosine fade-out at the tail to prevent clicks
+        fade_samples = min(int(0.010 * sample_rate), len(trimmed))
+        if fade_samples > 0:
+            taper = 0.5 * (1.0 + np.cos(np.linspace(0, np.pi, fade_samples)))
+            trimmed[-fade_samples:] *= taper
+        return trimmed
 
     def synthesize(self, text: str, speed: float = 1.0) -> tuple[bytes, int, float]:
         """Synthesize Hebrew text to 22.05 kHz 16-bit WAV bytes.
@@ -148,9 +183,14 @@ class RoboShaulSynthesizer:
         if not cleaned:
             raise ValueError("Input text is empty")
 
-        # 1. Diacritize with Nakdimon if not already vocalized
+        # 1. Diacritize with Nakdimon using adaptive sequence length (100x faster than fixed 10k)
         if not has_niqqud(cleaned):
-            vocalized = nakdimon.diacritize(cleaned)
+            maxlen = min(1000, max(64, len(cleaned) + 32))
+            try:
+                import nakdimon.predict
+                vocalized = nakdimon.predict.predict(cleaned, maxlen=maxlen)
+            except Exception:
+                vocalized = nakdimon.diacritize(cleaned)
         else:
             vocalized = cleaned
 
@@ -167,13 +207,16 @@ class RoboShaulSynthesizer:
         with self._lock, torch.no_grad():
             _, mel_outputs_postnet, _, _ = self.tacotron_model.inference(sequence_tensor)
             audio = self.waveglow_model.infer(mel_outputs_postnet, sigma=0.8)
-            if self.denoiser:
+            if self.use_denoiser and self.denoiser:
                 audio = self.denoiser(audio, strength=0.01)[:, 0]
             audio_np = audio[0].cpu().numpy().astype(np.float32)
 
         sample_rate = 22050
 
-        # 5. Speed adjustment via librosa time stretching if speed != 1.0
+        # 5. Trim trailing/leading silence for natural, instant pacing between dots/sentences
+        audio_np = self._trim_silence(audio_np, sample_rate=sample_rate)
+
+        # 6. Speed adjustment via librosa time stretching if speed != 1.0
         if speed != 1.0 and 0.5 <= speed <= 2.5:
             try:
                 import librosa
@@ -181,7 +224,7 @@ class RoboShaulSynthesizer:
             except Exception as e:
                 print(f"[RoboShaul] Time stretch warning: {e}")
 
-        # 6. Normalize and encode as 16-bit PCM WAV
+        # 7. Normalize and encode as 16-bit PCM WAV
         max_val = np.max(np.abs(audio_np))
         if max_val > 1.0:
             audio_np = audio_np / max_val

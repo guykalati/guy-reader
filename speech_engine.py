@@ -130,6 +130,7 @@ class SpeechEngine:
         self._kokoro = None
         self._init_kokoro()
         self._roboshaul = None
+        self._roboshaul_cache = {}
         self._init_roboshaul()
 
     def _init_kokoro(self):
@@ -150,6 +151,8 @@ class SpeechEngine:
                 if synth.is_available():
                     self._roboshaul = synth
                     print("[SpeechEngine] Robo-Shaul synthesizer detected and ready.")
+                    import threading
+                    threading.Thread(target=synth.load_models, daemon=True).start()
             except Exception as e:
                 print(f"[SpeechEngine] Notice initializing Robo-Shaul: {e}")
 
@@ -218,13 +221,21 @@ class SpeechEngine:
 
     def _synthesize_roboshaul(self, text: str, speed: float) -> SynthesisResult:
         """Synthesize Hebrew text via local Robo-Shaul (Tacotron2 + WaveGlow)."""
+        cache_key = (text.strip(), round(float(speed), 2))
+        if cache_key in self._roboshaul_cache:
+            return self._roboshaul_cache[cache_key]
+
         audio_bytes, sample_rate, duration = self._roboshaul.synthesize(text, speed=speed)
-        return SynthesisResult(
+        result = SynthesisResult(
             audio_bytes=audio_bytes,
             sample_rate=sample_rate,
             duration_seconds=duration,
             language="he",
         )
+        if len(self._roboshaul_cache) > 64:
+            self._roboshaul_cache.pop(next(iter(self._roboshaul_cache)))
+        self._roboshaul_cache[cache_key] = result
+        return result
 
     def _synthesize_edge(
         self,
