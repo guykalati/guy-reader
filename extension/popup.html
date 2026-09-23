@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Guy_reader</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="popup-container">
+    <div class="header">
+      <div class="logo">
+        <span class="icon">🔊</span>
+        <span class="title">Guy_reader</span>
+      </div>
+      <span class="badge">AI Web Reader</span>
+    </div>
+
+    <div class="actions">
+      <button class="btn btn-primary" id="btnReadArticle">
+        <span class="btn-icon">▶</span>
+        <div class="btn-text">
+          <strong>Read Entire Article</strong>
+          <small>Reads from first word to last word</small>
+        </div>
+      </button>
+
+      <button class="btn btn-secondary" id="btnReadSelection">
+        <span class="btn-icon">📑</span>
+        <div class="btn-text">
+          <strong>Read from Click / Selection</strong>
+          <small>Starts where you clicked or highlighted</small>
+        </div>
+      </button>
+    </div>
+
+    <div id="statusNotice" class="status-notice" style="display: none;"></div>
+
+    <div class="features-info">
+      <div class="feature-item">
+        <span class="f-icon">✨</span>
+        <span><strong>In-Page Highlighting</strong>: Words and lines glow directly on the webpage.</span>
+      </div>
+      <div class="feature-item">
+        <span class="f-icon">🎯</span>
+        <span><strong>Click-to-Seek</strong>: Click any word on the webpage to jump audio there.</span>
+      </div>
+    </div>
+
+    <div class="footer">
+      <span class="shortcut-tip">Shortcut: <kbd>Alt + Space</kbd></span>
+    </div>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

@@ -1,0 +1,37 @@
+# Python artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.pytest_cache/
+*.log
+server.log
+
+# Virtual Environments
+.venv*/
+venv*/
+env*/
+ENV*/
+
+# Neural Model Weights (Use 'python download_models.py' instead)
+models/
+*.onnx
+*.pt
+*.bin
+pocket-tts-english-ipa.onnx
+pocket-tts-english.onnx
+renikud.onnx
+
+# macOS application bundles & temporary build output
+*.app/
+*.dSYM/
+build/
+dist/
+*.ses
+.DS_Store
+tests/run_test_*
+
+# Scratch / Agent Notes
+.scratch/
+scratch/
+.claude/

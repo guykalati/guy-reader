@@ -1,0 +1,252 @@
+/* Guy_reader In-Page Highlighting & Floating Controls */
+
+/* Active Sentence Highlight on Webpage */
+.guy-reader-sentence-active {
+  background: rgba(191, 245, 73, 0.22) !important;
+  border-radius: 4px !important;
+  box-shadow: 0 0 0 2px rgba(191, 245, 73, 0.35) !important;
+  transition: background 0.15s ease, box-shadow 0.15s ease !important;
+}
+
+/* Active Word Highlight on Webpage */
+.guy-reader-word-active {
+  background: #BFF549 !important;
+  color: #0b0d10 !important;
+  font-weight: 700 !important;
+  border-radius: 3px !important;
+  padding: 1px 3px !important;
+  box-shadow: 0 1px 6px rgba(191, 245, 73, 0.5) !important;
+  transition: all 0.1s ease !important;
+}
+
+/* Hover effect on clickable sentences when Guy_reader is active */
+.guy-reader-interactive-sentence {
+  cursor: pointer !important;
+}
+.guy-reader-interactive-sentence:hover {
+  outline: 1px dashed rgba(191, 245, 73, 0.5) !important;
+}
+
+/* Floating Player Pill on Webpage */
+#guy-reader-floating-pill {
+  position: fixed !important;
+  top: 20px !important;
+  right: 24px !important;
+  z-index: 2147483647 !important;
+  display: flex !important;
+  align-items: center !important;
+  gap: 8px !important;
+  background: rgba(15, 17, 21, 0.94) !important;
+  backdrop-filter: blur(20px) !important;
+  -webkit-backdrop-filter: blur(20px) !important;
+  border: 1px solid rgba(255, 255, 255, 0.14) !important;
+  border-radius: 9999px !important;
+  padding: 6px 14px !important;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(191, 245, 73, 0.2) !important;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif !important;
+  font-size: 13px !important;
+  color: #f3f4f6 !important;
+  user-select: none !important;
+  transition: opacity 0.2s ease, transform 0.2s ease !important;
+}
+
+#guy-reader-floating-pill.guy-hidden {
+  display: none !important;
+}
+
+#guy-reader-drag-handle {
+  display: flex !important;
+  align-items: center !important;
+  cursor: grab !important;
+  color: #9ca3af !important;
+  padding: 2px !important;
+}
+#guy-reader-drag-handle:active {
+  cursor: grabbing !important;
+}
+
+.guy-reader-status-dot {
+  width: 7px !important;
+  height: 7px !important;
+  border-radius: 50% !important;
+  background: #BFF549 !important;
+  box-shadow: 0 0 8px #BFF549 !important;
+}
+
+.guy-reader-pill-btn {
+  background: transparent !important;
+  border: none !important;
+  color: #f3f4f6 !important;
+  cursor: pointer !important;
+  padding: 4px 6px !important;
+  border-radius: 6px !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  font-family: inherit !important;
+  font-size: 13px !important;
+  transition: background 0.15s ease, color 0.15s ease !important;
+}
+.guy-reader-pill-btn:hover {
+  background: rgba(255, 255, 255, 0.12) !important;
+  color: #BFF549 !important;
+}
+
+.guy-reader-pill-btn-play {
+  background: #BFF549 !important;
+  color: #0b0d10 !important;
+  border-radius: 50% !important;
+  width: 28px !important;
+  height: 28px !important;
+  padding: 0 !important;
+  box-shadow: 0 2px 8px rgba(191, 245, 73, 0.4) !important;
+}
+.guy-reader-pill-btn-play:hover {
+  background: #d4ff70 !important;
+  color: #0b0d10 !important;
+  transform: scale(1.05) !important;
+}
+
+.guy-reader-speed-group {
+  display: flex !important;
+  align-items: center !important;
+  background: rgba(255, 255, 255, 0.08) !important;
+  border-radius: 9999px !important;
+  padding: 1px 4px !important;
+}
+.guy-reader-speed-btn {
+  background: transparent !important;
+  border: none !important;
+  color: #9ca3af !important;
+  cursor: pointer !important;
+  font-size: 11px !important;
+  padding: 2px 4px !important;
+}
+.guy-reader-speed-btn:hover {
+  color: #BFF549 !important;
+}
+.guy-reader-speed-val {
+  font-size: 11px !important;
+  font-weight: 700 !important;
+  color: #f3f4f6 !important;
+  padding: 0 4px !important;
+}
+
+.guy-reader-counter {
+  font-size: 11px !important;
+  font-weight: 700 !important;
+  color: #BFF549 !important;
+  background: rgba(191, 245, 73, 0.12) !important;
+  padding: 2px 6px !important;
+  border-radius: 4px !important;
+}
+
+.guy-reader-voice-select {
+  background: rgba(255, 255, 255, 0.08) !important;
+  border: 1px solid rgba(255, 255, 255, 0.14) !important;
+  color: #f3f4f6 !important;
+  border-radius: 6px !important;
+  font-size: 11px !important;
+  padding: 3px 6px !important;
+  cursor: pointer !important;
+  outline: none !important;
+}
+.guy-reader-voice-select option {
+  background: #181b20 !important;
+  color: #f3f4f6 !important;
+}
+
+.guy-reader-close-btn {
+  color: #9ca3af !important;
+  font-size: 14px !important;
+  cursor: pointer !important;
+  padding: 2px 5px !important;
+  border-radius: 4px !important;
+}
+.guy-reader-close-btn:hover {
+  color: #ef4444 !important;
+  background: rgba(239, 68, 68, 0.12) !important;
+}
+
+/* Clean Reader Mode Toggle Button */
+.guy-reader-clean-btn {
+  font-size: 14px !important;
+  cursor: pointer !important;
+  padding: 2px 5px !important;
+  border-radius: 4px !important;
+  transition: background 0.15s ease !important;
+}
+.guy-reader-clean-btn:hover {
+  background: rgba(255, 255, 255, 0.12) !important;
+}
+
+/* Clean Reader Mode Overlay */
+#guy-reader-clean-overlay {
+  position: fixed !important;
+  top: 0 !important;
+  left: 0 !important;
+  width: 100vw !important;
+  height: 100vh !important;
+  z-index: 2147483646 !important;
+  background: #fefefe !important;
+  overflow-y: auto !important;
+  padding: 80px 0 120px 0 !important;
+}
+
+.guy-reader-clean-content {
+  max-width: 680px !important;
+  margin: 0 auto !important;
+  padding: 0 24px !important;
+  font-family: Georgia, 'Times New Roman', serif !important;
+  color: #1a1a1a !important;
+  line-height: 1.8 !important;
+}
+
+.guy-reader-clean-title {
+  font-size: 28px !important;
+  font-weight: 700 !important;
+  margin-bottom: 32px !important;
+  line-height: 1.3 !important;
+  color: #0b0d10 !important;
+  border-bottom: 2px solid #BFF549 !important;
+  padding-bottom: 16px !important;
+}
+
+.guy-reader-clean-para {
+  font-size: 18px !important;
+  margin-bottom: 20px !important;
+  color: #2d2d2d !important;
+}
+
+/* Override active highlights inside clean reader */
+#guy-reader-clean-overlay .guy-reader-sentence-active {
+  background: rgba(191, 245, 73, 0.18) !important;
+  border-radius: 4px !important;
+  box-shadow: 0 0 0 2px rgba(191, 245, 73, 0.3) !important;
+}
+
+#guy-reader-clean-overlay .guy-reader-word-active {
+  background: #BFF549 !important;
+  color: #0b0d10 !important;
+  border-radius: 3px !important;
+  padding: 1px 3px !important;
+}
+
+@media (prefers-color-scheme: dark) {
+  #guy-reader-clean-overlay {
+    background: #1a1a1a !important;
+  }
+  .guy-reader-clean-content {
+    color: #e8e8e8 !important;
+  }
+  .guy-reader-clean-title {
+    color: #f3f4f6 !important;
+  }
+  .guy-reader-clean-para {
+    color: #d1d1d1 !important;
+  }
+}
+
+/* Native Range highlights leave page markup and layout unchanged. */
+::highlight(guy-reader-sentence) { background-color: rgba(191, 245, 73, 0.18); }
+::highlight(guy-reader-word) { background-color: #BFF549; color: #0b0d10; text-decoration: underline; }

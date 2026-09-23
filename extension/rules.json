@@ -1,0 +1,40 @@
+[
+  {
+    "id": 1,
+    "priority": 1,
+    "action": {
+      "type": "modifyHeaders",
+      "requestHeaders": [
+        {
+          "header": "Origin",
+          "operation": "set",
+          "value": "chrome-extension://jdiccldimpdaibmpdkjnbmckianbfold"
+        },
+        {
+          "header": "User-Agent",
+          "operation": "set",
+          "value": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36 Edg/143.0.0.0"
+        },
+        {
+          "header": "Pragma",
+          "operation": "set",
+          "value": "no-cache"
+        },
+        {
+          "header": "Cache-Control",
+          "operation": "set",
+          "value": "no-cache"
+        },
+        {
+          "header": "Cookie",
+          "operation": "set",
+          "value": "muid=6A5AA1D4EAFF4E9FB37E23D68491D6F4;"
+        }
+      ]
+    },
+    "condition": {
+      "urlFilter": "speech.platform.bing.com",
+      "resourceTypes": ["websocket", "xmlhttprequest", "other"]
+    }
+  }
+]

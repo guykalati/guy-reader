@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Guy_reader</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body class="draggable-body">
+  <div class="guy-reader-container glaido-container" id="guyReaderContainer">
+    <!-- Compact Floating Pill (Always visible) -->
+    <div class="pill-bar" id="pillBar">
+      <div class="drag-zone" id="dragZone" title="Drag to move window">
+        <!-- 6-dot Drag Grip Handle -->
+        <svg class="icon-grip" viewBox="0 0 16 16" width="12" height="12" fill="currentColor">
+          <circle cx="5" cy="4" r="1.4"/>
+          <circle cx="11" cy="4" r="1.4"/>
+          <circle cx="5" cy="8" r="1.4"/>
+          <circle cx="11" cy="8" r="1.4"/>
+          <circle cx="5" cy="12" r="1.4"/>
+          <circle cx="11" cy="12" r="1.4"/>
+        </svg>
+        <span class="status-dot" id="statusDot"></span>
+        <!-- 5-bar Guy_reader Voice Equalizer -->
+        <div class="equalizer" id="equalizer">
+          <span class="bar bar-1"></span>
+          <span class="bar bar-2"></span>
+          <span class="bar bar-3"></span>
+          <span class="bar bar-4"></span>
+          <span class="bar bar-5"></span>
+        </div>
+      </div>
+
+      <!-- Quick Text Preview / Status -->
+      <div class="preview-zone" id="previewZone" title="Click to expand text drawer">
+        <span class="lang-tag" id="langTag">EN</span>
+        <span class="preview-text" id="previewText">Ready. Click Read or ▶ to start</span>
+      </div>
+
+      <!-- Playback Controls -->
+      <div class="controls-group">
+        <!-- Speed Micro-Controls (0.5x to 2.5x in 0.1 steps) -->
+        <div class="speed-pill-group">
+          <button class="btn-micro" id="btnSpeedDown" title="Decrease speed (0.1x)">−</button>
+          <button class="btn-speed" id="btnSpeedVal" title="Click to adjust speed">1.0x</button>
+          <button class="btn-micro" id="btnSpeedUp" title="Increase speed (0.1x)">+</button>
+        </div>
+
+        <!-- Play / Pause Button -->
+        <button class="btn-icon btn-play" id="btnPlayPause" title="Play / Pause">
+          <svg class="icon-play" id="iconPlay" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M8 5.14v14l11-7-11-7z"/>
+          </svg>
+          <svg class="icon-pause" id="iconPause" viewBox="0 0 24 24" fill="currentColor" style="display:none;">
+            <path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/>
+          </svg>
+        </button>
+
+        <!-- Read Selection / Clipboard Quick Trigger -->
+        <button class="btn-read" id="btnReadSelection" title="Read clicked or highlighted text">
+          <span class="read-label">Read</span>
+        </button>
+
+        <button class="btn-icon" id="btnStop" title="Stop reading">■</button>
+
+        <!-- Paste & Read Quick Button -->
+        <button class="btn-icon btn-pill-paste" id="btnPillPaste" title="Paste & Read clipboard">
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"></path>
+            <rect x="8" y="2" width="8" height="4" rx="1" ry="1"></rect>
+          </svg>
+        </button>
+
+        <!-- Voice & Speed Settings Pill Button -->
+        <button class="btn-icon btn-pill-settings" id="btnPillSettings" title="Voice & Speed Settings">
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="3"></circle>
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+          </svg>
+        </button>
+
+        <!-- Expand / Collapse Drawer Chevron -->
+        <button class="btn-icon btn-toggle-drawer" id="btnToggleDrawer" title="Toggle Reader Drawer">
+          <svg class="icon-chevron" id="iconChevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="6 9 12 15 18 9"></polyline>
+          </svg>
+        </button>
+
+        <!-- Window Controls: Minimize & Exit in dedicated isolated group -->
+        <div class="window-controls-group">
+          <button class="btn-win-ctrl" id="btnMinimize" title="Minimize to menu bar (—)">
+            <svg viewBox="0 0 24 24" width="12" height="12" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
+              <line x1="5" y1="12" x2="19" y2="12"></line>
+            </svg>
+          </button>
+
+          <button class="btn-win-ctrl btn-exit" id="btnExit" title="Exit Guy_reader (✕)">
+            <svg viewBox="0 0 24 24" width="12" height="12" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
+              <line x1="6" y1="6" x2="18" y2="18"></line>
+              <line x1="6" y1="18" x2="18" y2="6"></line>
+            </svg>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Expandable Readest-Style Drawer -->
+    <div class="drawer" id="drawer" style="display: none;">
+      <div class="drawer-header">
+        <div class="drawer-voice-selector">
+          <label for="voiceSelect">Voice:</label>
+          <select id="voiceSelect" class="voice-dropdown">
+            <optgroup label="Kokoro-82M Neural (Local & Offline)">
+              <option value="af_sarah" selected>🧠 Sarah (American Female - Kokoro)</option>
+              <option value="am_michael">🧠 Michael (American Male - Kokoro)</option>
+            </optgroup>
+            <optgroup label="Hebrew Voices (Robo-Shaul & Edge Neural)">
+              <option value="he-roboshaul">🎙️ Shaul (Hebrew Male - RoboShaul)</option>
+              <option value="edge-he-avri">🌟 Avri (Hebrew Male - Neural)</option>
+              <option value="edge-he-hila">🌟 Hila (Hebrew Female - Neural)</option>
+            </optgroup>
+            <optgroup label="macOS Native Offline">
+              <option value="apple-evan">🍏 Evan (Enhanced) (Apple US)</option>
+            </optgroup>
+            <optgroup label="Edge AI Online">
+              <option value="edge-en-jenny">🌟 Jenny (English US - Edge AI)</option>
+              <option value="edge-en-guy">🌟 Guy (English US - Edge AI)</option>
+            </optgroup>
+            <optgroup label="Google Cloud AI">
+              <option value="google-en-neural2">🌐 Google English Neural2</option>
+              <option value="google-he-neural2">🌐 Google Hebrew Neural2</option>
+              <option value="google-he-wavenet">🌐 Google Hebrew Wavenet</option>
+            </optgroup>
+            <optgroup label="ElevenLabs Multilingual">
+              <option value="eleven-rachel">💎 Rachel (ElevenLabs Multilingual)</option>
+              <option value="eleven-adam">💎 Adam (ElevenLabs Multilingual)</option>
+              <option value="eleven-charlie">💎 Charlie (ElevenLabs Multilingual)</option>
+            </optgroup>
+          </select>
+        </div>
+
+        <div class="drawer-actions">
+          <button class="btn-text" id="btnEditText" title="Edit or enter custom text">✏️ Edit Text</button>
+          <button class="btn-text" id="btnPasteText" title="Paste text from clipboard">Paste</button>
+          <button class="btn-text" id="btnClearText" title="Clear text">Clear</button>
+          <button class="btn-text" id="btnSettings" title="Voice & Speed Settings">⚙ Settings</button>
+        </div>
+      </div>
+
+      <!-- Sentence-by-Sentence Follow Along Reader View (Readest style) -->
+      <div class="reader-content" id="readerContent">
+        <div class="empty-state" id="emptyState">
+          <p class="empty-state-hint">Highlight text anywhere & press <kbd>fn + G</kbd> (or click <strong>Read</strong>), or paste/type below:</p>
+          <div class="manual-input-card">
+            <textarea class="manual-textarea" id="manualTextInput" placeholder="Paste or type text to read here..." rows="3"></textarea>
+            <div class="manual-actions-row">
+              <button class="btn-primary-action" id="btnReadManualText">▶ Read Text</button>
+              <button class="btn-secondary-action" id="btnEmptyPaste" title="Read text from clipboard">📋 Paste & Read</button>
+            </div>
+          </div>
+        </div>
+        <div class="sentences-list" id="sentencesList" style="display: none;"></div>
+      </div>
+
+      <!-- Drawer Bottom Speed Scrubber -->
+      <div class="drawer-footer">
+        <div class="speed-slider-wrap">
+          <span class="speed-min">0.5x</span>
+          <input type="range" id="speedSlider" min="0.5" max="2.5" step="0.1" value="1.0">
+          <span class="speed-max">2.5x</span>
+          <span class="speed-current" id="speedSliderVal">1.0x</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Interactive Resize Handles -->
+    <div class="resize-handle resize-right" id="resizeHandleRight" title="Drag to resize width"></div>
+    <div class="resize-handle resize-corner" id="resizeHandleCorner" title="Drag to resize window"></div>
+
+    <!-- Voice & Speed Settings Drawer / Modal -->
+    <div class="modal" id="settingsModal" style="display: none;">
+      <div class="modal-content settings-modal-content">
+        <div class="modal-header">
+          <div class="modal-title-group">
+            <span class="settings-header-icon">⚙️</span>
+            <h3>Voice & Playback Settings</h3>
+          </div>
+          <button class="btn-icon btn-close-modal" id="btnCloseSettings" title="Close Settings">✕</button>
+        </div>
+        <div class="modal-body">
+          <label class="form-group"><input type="checkbox" id="synchronizedMode"> Follow words with Evan (offline English only)</label>
+          <p class="settings-help">Unchecked by default to use your selected neural voices (Kokoro & Edge). Checked: uses offline Apple Evan for synchronized word ranges.</p>
+          <!-- Default English Voice -->
+          <div class="form-group">
+            <label for="settingsVoiceEn">Default English Voice (Kokoro-82M Local):</label>
+            <div class="voice-preview-row">
+              <select id="settingsVoiceEn" class="voice-dropdown settings-dropdown">
+                <option value="af_sarah" selected>🧠 Sarah (American Female - Kokoro)</option>
+                <option value="am_michael">🧠 Michael (American Male - Kokoro)</option>
+                <option value="apple-evan">🍏 Evan (Enhanced - Apple Native)</option>
+                <option value="edge-en-jenny">🌟 Jenny (Female - Edge AI)</option>
+                <option value="edge-en-guy">🌟 Guy (Male - Edge AI)</option>
+              </select>
+              <button class="btn-test-voice" id="btnTestVoiceEn" title="Preview English Voice">▶ Test</button>
+            </div>
+          </div>
+
+          <!-- Default Hebrew Voice -->
+          <div class="form-group">
+            <label for="settingsVoiceHe">Default Hebrew Voice:</label>
+            <div class="voice-preview-row">
+              <select id="settingsVoiceHe" class="voice-dropdown settings-dropdown">
+                <option value="he-roboshaul">🎙️ Shaul (Hebrew Male - RoboShaul)</option>
+                <option value="edge-he-avri" selected>🌟 Avri (Hebrew Male - Neural)</option>
+                <option value="edge-he-hila">🌟 Hila (Hebrew Female - Neural)</option>
+              </select>
+              <button class="btn-test-voice" id="btnTestVoiceHe" title="Preview Hebrew Voice">▶ Test</button>
+            </div>
+          </div>
+
+          <!-- Speech Speed Rate -->
+          <div class="form-group">
+            <div class="speed-setting-header">
+              <label for="settingsSpeedSlider">Reading Speed:</label>
+              <span class="speed-setting-val" id="settingsSpeedVal">1.0x</span>
+            </div>
+            <div class="speed-setting-control">
+              <button class="btn-micro" id="btnSettingsSpeedDown">−</button>
+              <input type="range" id="settingsSpeedSlider" min="0.5" max="2.5" step="0.1" value="1.0" class="settings-slider">
+              <button class="btn-micro" id="btnSettingsSpeedUp">+</button>
+            </div>
+            <p class="form-hint">Adjust speech speed from 0.5x (slow) to 2.5x (fast) in 0.1x steps.</p>
+          </div>
+
+          <!-- Live Voice Preview Status -->
+          <div class="preview-sandbox-card">
+            <div class="preview-sandbox-header">
+              <span>🔊 Live Audio Preview</span>
+              <span class="preview-status" id="previewStatus">Ready</span>
+            </div>
+            <p class="preview-sample-text" id="previewSampleText">"Hello! This is Guy Reader with Kokoro-82M neural speech."</p>
+          </div>
+
+          <!-- Advanced: Optional Cloud API Keys -->
+          <details class="settings-advanced-details">
+            <summary class="settings-advanced-summary">Advanced: Cloud API Keys (Optional)</summary>
+            <div class="advanced-inputs">
+              <div class="form-group">
+                <label for="elevenApiKey">ElevenLabs API Key:</label>
+                <input type="password" id="elevenApiKey" placeholder="xi-..." autocomplete="off">
+              </div>
+              <div class="form-group">
+                <label for="googleApiKey">Google Cloud TTS Key:</label>
+                <input type="password" id="googleApiKey" placeholder="AIza..." autocomplete="off">
+              </div>
+            </div>
+          </details>
+        </div>
+        <div class="modal-footer">
+          <button class="btn-secondary" id="btnResetSettings">Reset Defaults</button>
+          <button class="btn-primary" id="btnSaveSettings">Save & Apply</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
