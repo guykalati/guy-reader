@@ -30,9 +30,11 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic, assign) BOOL browserReading;
 @property (nonatomic, strong, nullable) NSTimer *browserStateTimer;
 @property (nonatomic, assign) NSUInteger browserSession;
+@property (nonatomic, assign) BOOL hasStoppedEngine;
 - (void)readSelectionFromActiveApp;
 - (void)notifyNoTextCaptured;
 - (void)ensureSpeechEngineDaemonRunning;
+- (void)stopSpeechEngineDaemon;
 - (void)quitApp;
 @end
 
@@ -291,12 +293,86 @@ static NSString *const kSmartExtractJS =
     });
 }
 
-- (void)applicationWillTerminate:(NSNotification *)notification {
-    if (self.sourceClickMonitor) [NSEvent removeMonitor:self.sourceClickMonitor];
-    if (self.speechEngineTask && self.speechEngineTask.isRunning) {
-        [self.speechEngineTask terminate];
+- (void)stopSpeechEngineDaemon {
+    if (self.hasStoppedEngine) return;
+    self.hasStoppedEngine = YES;
+
+    NSLog(@"[GuyReader] Stopping speech engine daemon...");
+
+    // 1. Send graceful shutdown request to HTTP /shutdown endpoint
+    NSURL *shutdownUrl = [NSURL URLWithString:@"http://127.0.0.1:5050/shutdown"];
+    NSMutableURLRequest *req = [NSMutableURLRequest requestWithURL:shutdownUrl];
+    req.HTTPMethod = @"POST";
+    req.timeoutInterval = 0.4;
+    dispatch_semaphore_t sem = dispatch_semaphore_create(0);
+    [[[NSURLSession sharedSession] dataTaskWithRequest:req completionHandler:^(NSData *data, NSURLResponse *resp, NSError *err) {
+        dispatch_semaphore_signal(sem);
+    }] resume];
+    dispatch_semaphore_wait(sem, dispatch_time(DISPATCH_TIME_NOW, (int64_t)(250 * NSEC_PER_MSEC)));
+
+    // 2. Terminate the launched NSTask process if running
+    if (self.speechEngineTask) {
+        @try {
+            pid_t pid = [self.speechEngineTask processIdentifier];
+            if (self.speechEngineTask.isRunning) {
+                [self.speechEngineTask terminate];
+                for (int i = 0; i < 10 && self.speechEngineTask.isRunning; i++) {
+                    usleep(50000); // 50ms * 10 = 500ms max
+                }
+                if (self.speechEngineTask.isRunning && pid > 0) {
+                    kill(pid, SIGKILL);
+                }
+            }
+        } @catch (NSException *ex) {
+            NSLog(@"[GuyReader] Exception terminating speechEngineTask: %@", ex);
+        }
         self.speechEngineTask = nil;
     }
+
+    // 3. Read PID file(s) and terminate if still alive
+    NSString *appBundlePath = [[NSBundle mainBundle] bundlePath];
+    NSString *workspaceDir = [appBundlePath stringByDeletingLastPathComponent];
+    NSArray *pidPaths = @[
+        [workspaceDir stringByAppendingPathComponent:@"speech_engine.pid"],
+        @"/Users/gyklty/Desktop/Guy/TTS/speech_engine.pid",
+        [NSTemporaryDirectory() stringByAppendingPathComponent:@"guy_reader_speech_engine.pid"],
+        @"/tmp/guy_reader_speech_engine.pid"
+    ];
+    for (NSString *pidPath in pidPaths) {
+        if ([[NSFileManager defaultManager] fileExistsAtPath:pidPath]) {
+            NSString *pidStr = [NSString stringWithContentsOfFile:pidPath encoding:NSUTF8StringEncoding error:nil];
+            if (pidStr) {
+                pid_t pid = (pid_t)[pidStr integerValue];
+                if (pid > 1) {
+                    kill(pid, SIGTERM);
+                    usleep(50000);
+                    if (kill(pid, 0) == 0) {
+                        kill(pid, SIGKILL);
+                    }
+                }
+            }
+            [[NSFileManager defaultManager] removeItemAtPath:pidPath error:nil];
+        }
+    }
+
+    // 4. Fallback pkill to guarantee no orphaned speech_engine.py is running
+    @try {
+        NSTask *pkillTask = [[NSTask alloc] init];
+        pkillTask.launchPath = @"/usr/bin/pkill";
+        pkillTask.arguments = @[@"-f", @"speech_engine.py"];
+        pkillTask.standardOutput = [NSFileHandle fileHandleWithNullDevice];
+        pkillTask.standardError = [NSFileHandle fileHandleWithNullDevice];
+        [pkillTask launch];
+        [pkillTask waitUntilExit];
+    } @catch (NSException *ex) {
+        // ignore
+    }
+}
+
+- (void)applicationWillTerminate:(NSNotification *)notification {
+    if (self.sourceClickMonitor) [NSEvent removeMonitor:self.sourceClickMonitor];
+    [self.speechEngine stop];
+    [self stopSpeechEngineDaemon];
 }
 
 - (void)handleAppChange:(NSNotification *)note {
@@ -354,10 +430,7 @@ static NSString *const kSmartExtractJS =
 
 - (void)quitApp {
     [self.speechEngine stop];
-    if (self.speechEngineTask && self.speechEngineTask.isRunning) {
-        [self.speechEngineTask terminate];
-        self.speechEngineTask = nil;
-    }
+    [self stopSpeechEngineDaemon];
     [NSApp terminate:nil];
 }
 

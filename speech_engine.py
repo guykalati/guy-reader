@@ -4,6 +4,10 @@ Unified, local-first speech synthesis for English (Kokoro-82M) and Hebrew (Phoni
 """
 
 from __future__ import annotations
+import os
+import signal
+import threading
+import atexit
 import io
 import re
 import subprocess
@@ -15,6 +19,30 @@ from dataclasses import dataclass, field
 from pathlib import Path
 import numpy as np
 import soundfile as sf
+
+PID_FILE = Path(__file__).resolve().parent / "speech_engine.pid"
+TMP_PID_FILE = Path(tempfile.gettempdir()) / "guy_reader_speech_engine.pid"
+
+
+def write_pid_file():
+    try:
+        pid_str = str(os.getpid())
+        PID_FILE.write_text(pid_str, encoding="utf-8")
+        TMP_PID_FILE.write_text(pid_str, encoding="utf-8")
+    except Exception:
+        pass
+
+
+def remove_pid_file():
+    for p in (PID_FILE, TMP_PID_FILE):
+        try:
+            if p.exists():
+                p.unlink()
+        except Exception:
+            pass
+
+
+atexit.register(remove_pid_file)
 
 # Kokoro ONNX import
 try:
@@ -367,6 +395,31 @@ pending_commands: dict[str, tuple[WebSocket, asyncio.Future]] = {}
 browser_state = {"playing": False, "paused": False, "index": -1, "total": 0}
 
 
+@app.on_event("startup")
+def on_startup():
+    write_pid_file()
+
+
+@app.on_event("shutdown")
+def on_shutdown():
+    remove_pid_file()
+
+
+@app.post("/shutdown")
+def shutdown():
+    """Gracefully terminate speech engine process."""
+    def _do_shutdown():
+        time.sleep(0.15)
+        remove_pid_file()
+        try:
+            os.kill(os.getpid(), signal.SIGTERM)
+        except Exception:
+            os._exit(0)
+
+    threading.Thread(target=_do_shutdown, daemon=True).start()
+    return {"status": "shutting_down"}
+
+
 @app.get("/reader-state")
 def reader_state():
     return browser_state
@@ -509,5 +562,9 @@ if _ui_path.exists():
 
 
 if __name__ == "__main__":
+    write_pid_file()
     import uvicorn
-    uvicorn.run(app, host="127.0.0.1", port=5050)
+    try:
+        uvicorn.run(app, host="127.0.0.1", port=5050)
+    finally:
+        remove_pid_file()
