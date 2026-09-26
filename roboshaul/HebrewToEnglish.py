@@ -1,25 +1,47 @@
 import re
 from hebrew import Hebrew
 
- ##deals with . and , in a normal string
+##deals with punctuation tokens in a normal string
 def break_to_letter_and_rebuild(string):
-    lst=[]
-    i=0
-    flag=False
-    while i<len(string):
-        tmp=""
-        while i<len(string) and string[i] != '.' and string[i] != ',':
-            tmp+=string[i]
-            i+=1
-            flag=True
-        if flag:
-            lst.append(tmp)
-            flag=False
-        if i<len(string):
-            lst.append(string[i])
-            i+=1
-
-    return lst
+    if not string:
+        return []
+    string = string.replace('…', '...')
+    punct_set = set(',:;!?()[]—–.')
+    cleaned = string.strip('\"\'״׳«»“”')
+    if not cleaned:
+        return []
+    if cleaned == '...':
+        return ['...']
+    if all(c in punct_set or c == '-' for c in cleaned):
+        return [c for c in cleaned if c in punct_set or c == '-']
+    lead = []
+    i = 0
+    while i < len(cleaned) and (cleaned[i] in punct_set or (cleaned[i] == '-' and (i == len(cleaned) - 1 or not cleaned[i+1].isalnum()))):
+        if cleaned[i:i+3] == '...':
+            lead.append('...')
+            i += 3
+        else:
+            lead.append(cleaned[i])
+            i += 1
+    trail = []
+    j = len(cleaned)
+    while j > i and (cleaned[j-1] in punct_set or (cleaned[j-1] == '-' and (j == 1 or not cleaned[j-2].isalnum()))):
+        if j >= 3 and cleaned[j-3:j] == '...':
+            trail.insert(0, '...')
+            j -= 3
+        else:
+            trail.insert(0, cleaned[j-1])
+            j -= 1
+    word_core = cleaned[i:j]
+    tokens = []
+    tokens.extend(lead)
+    if word_core:
+        sub_parts = re.split(r'([,:;?!—–])', word_core)
+        for sp in sub_parts:
+            if sp:
+                tokens.append(sp)
+    tokens.extend(trail)
+    return tokens
 
 
 ##breaks down number to list
@@ -740,59 +762,104 @@ def HebrewWordToEnglishSound(word,index):
         pass
     return new_sentence
 
+def map_punct_token(token):
+    if token == ',':
+        return ", "
+    elif token == '.':
+        return ". "
+    elif token == ':':
+        return ": "
+    elif token in (';', '—', '–', '-'):
+        return " - "
+    elif token == '?':
+        return "? "
+    elif token == '!':
+        return "! "
+    elif token == '...':
+        return "... "
+    elif token in ('(', '['):
+        return "( "
+    elif token in (')', ']'):
+        return ") "
+    return None
+
 ##takes hebrew sentence and turns it into english sounds
-def HebrewToEnglish(sentence,index=0):
+def HebrewToEnglish(sentence, index=0):
     words = sentence.split()
     new_sentence = ""
 
     for word in words:
         ##if number not in string
         if not has_number(word):
-
-            ##breaks the word to letters and ',' and '.'
-            broken_word=break_to_letter_and_rebuild(word)
+            broken_word = break_to_letter_and_rebuild(word)
 
             for brk_word in broken_word:
-
-                ##tries to add silence
-                if brk_word=='.' or brk_word==',' or brk_word==';':
-                    new_sentence += "q"+" "
-
+                mp = map_punct_token(brk_word)
+                if mp:
+                    new_sentence = new_sentence.rstrip() + mp
                 else:
-                    ret_sentence=HebrewWordToEnglishSound(brk_word,index)
-                    new_sentence+=ret_sentence+" "
+                    ret_sentence = HebrewWordToEnglishSound(brk_word, index)
+                    if ret_sentence.strip():
+                        new_sentence += ret_sentence + " "
 
         ##if there is a number:
         else:
+            lead_punct = []
+            while word and word[0] in "([":
+                lead_punct.append(word[0])
+                word = word[1:]
+            trail_punct = []
+            while word and word[-1] in ",:;?!—–.)]":
+                trail_punct.insert(0, word[-1])
+                word = word[:-1]
+
+            for lp in lead_punct:
+                mp = map_punct_token(lp)
+                if mp:
+                    new_sentence = new_sentence.rstrip() + mp
+
             try:
-                before_num,num,after_num=split_number_and_string(word)
+                before_num, num, after_num = split_number_and_string(word)
 
                 if has_number(after_num) or has_number(before_num):
-                    list_of_numbers=clean_number(word)
-                    for number in list_of_numbers:
-                        ret_sentence = HebrewWordToEnglishSound(number, index)
-                        new_sentence += ret_sentence + " "
+                    list_of_numbers = clean_number(word)
+                    if list_of_numbers:
+                        for number in list_of_numbers:
+                            ret_sentence = HebrewWordToEnglishSound(number, index)
+                            if ret_sentence.strip():
+                                new_sentence += ret_sentence + " "
 
                 else:
-                    ret_sentence = HebrewWordToEnglishSound(before_num, index)
-                    new_sentence += ret_sentence+" "
+                    if before_num:
+                        ret_sentence = HebrewWordToEnglishSound(before_num, index)
+                        if ret_sentence.strip():
+                            new_sentence += ret_sentence + " "
 
                     num = [s for s in word if s.isdigit()]
-                    num="".join(num)
-                    num=int(num)
-                    list_of_numbers=NumberToHebrew(num)
-                    for number in list_of_numbers:
-                        ret_sentence=HebrewWordToEnglishSound(number,index)
-                        new_sentence += ret_sentence + " "
+                    if num:
+                        num = "".join(num)
+                        num = int(num)
+                        list_of_numbers = NumberToHebrew(num)
+                        for number in list_of_numbers:
+                            ret_sentence = HebrewWordToEnglishSound(number, index)
+                            if ret_sentence.strip():
+                                new_sentence += ret_sentence + " "
 
-                    ret_sentence = HebrewWordToEnglishSound(after_num, index)
-                    new_sentence += ret_sentence + " "
+                    if after_num:
+                        ret_sentence = HebrewWordToEnglishSound(after_num, index)
+                        if ret_sentence.strip():
+                            new_sentence += ret_sentence + " "
 
+            except Exception:
+                pass
 
+            for tp in trail_punct:
+                mp = map_punct_token(tp)
+                if mp:
+                    new_sentence = new_sentence.rstrip() + mp
 
-            except:
-                print("error from split_number_and_string in line:", index,"with word: ",word)
-
-
+    new_sentence = new_sentence.strip()
+    if new_sentence and not new_sentence.endswith(('.', '?', '!', '...', '-')):
+        new_sentence += " ."
 
     return new_sentence

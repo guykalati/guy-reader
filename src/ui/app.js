@@ -149,12 +149,14 @@
   // Sentence Splitter (Clean sentence extraction preserving text boundaries, decimals, emails, URLs, abbreviations)
   function splitSentences(rawText) {
     if (!rawText) return [];
-    const cleaned = rawText.replace(/\r\n/g, '\n').trim();
+    const cleaned = rawText.replace(/\r\n/g, '\n').replace(/\r/g, '\n').trim();
     if (!cleaned) return [];
 
     let text = cleaned;
-    // 1. Protect decimals like 3.5, $19.99
-    text = text.replace(/(\d)\.(\d)/g, '$1\uE000$2');
+    // 1. Protect numbers with decimals and multi-dot dates (e.g. 3.5, 7.10, 7.10.2023, $19.99)
+    while (/(\d)\.(\d)/.test(text)) {
+      text = text.replace(/(\d)\.(\d)/g, (m, d1, d2) => d1 + '\uE000' + d2);
+    }
 
     // 2. Protect email addresses
     text = text.replace(/([a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+)/g, (m) => m.replace(/\./g, '\uE000'));
@@ -166,23 +168,38 @@
     // 4. Protect a.m. / p.m.
     text = text.replace(/\b([ap]\.m\.)/gi, (m) => m.replace(/\./g, '\uE000'));
 
-    // 5. Protect single letter initials followed by capital letter
+    // 5. Protect English single letter initials followed by capital letter
     text = text.replace(/\b([A-Z])\.\s+(?=[A-Z])/g, '$1\uE000 ');
 
-    // 6. Protect common abbreviations & titles
-    const abbrevs = [
+    // 6. Protect Hebrew initials followed by Hebrew word (e.g. א. כהן, י. שמעוני)
+    text = text.replace(/(^|[\s("״'׳])([א-ת])\.\s+(?=[א-ת])/g, (m, p1, p2) => p1 + p2 + '\uE000 ');
+
+    // 7. Protect common English abbreviations & titles
+    const englishAbbrevs = [
       'dr', 'mr', 'mrs', 'ms', 'prof', 'sr', 'jr', 'vs', 'etc',
       'u.s.', 'u.s', 'e.g.', 'e.g', 'i.e.', 'i.e',
       'inc', 'ltd', 'corp', 'co', 'gen', 'col', 'gov', 'sen', 'rep',
       'st', 'ave', 'blvd', 'dept', 'no', 'fig', 'vol', 'al'
     ];
-    abbrevs.forEach(abbr => {
+    englishAbbrevs.forEach(abbr => {
       const esc = abbr.replace(/\./g, '\\.');
       const regex = new RegExp('\\b' + esc + (abbr.endsWith('.') ? '' : '\\.'), 'gi');
       text = text.replace(regex, (m) => m.replace(/\./g, '\uE000'));
     });
 
-    // 7. Protect dialogue quotes ending in punctuation when followed by lowercase attribution
+    // 8. Protect Hebrew title abbreviations before names (e.g. פרופ., ופרופ., ד"ר., עו"ד., וכו.)
+    const hebrewDotAbbrs = [
+      /(^|[\s("״'׳])([בלמכושה]?פרופ)\./g,
+      /(^|[\s("״'׳])([בלמכושה]?ד["״'׳]ר)\./g,
+      /(^|[\s("״'׳])([בלמכושה]?עו["״'׳]ד)\./g,
+      /(^|[\s("״'׳])([בלמכושה]?רו["״'׳]ח)\./g,
+      /(^|[\s("״'׳])(וכו)\./g
+    ];
+    hebrewDotAbbrs.forEach(regex => {
+      text = text.replace(regex, (m, p1, p2) => p1 + p2 + '\uE000');
+    });
+
+    // 9. Protect dialogue quotes ending in punctuation when followed by lowercase attribution
     text = text.replace(/([.!?׃]['"”’\)\]]*)\s+([a-z])/g, (match, p1, p2) => {
       return p1.replace(/\./g, '\uE000').replace(/!/g, '\uE001').replace(/\?/g, '\uE002') + ' ' + p2;
     });
@@ -486,7 +503,10 @@
       state.isPaused = true;
       setPlayPauseUI(false);
     });
-    if (typeof sentenceIndex === 'number') prebufferNextSentence(sentenceIndex + 1);
+    if (typeof sentenceIndex === 'number') {
+      prebufferNextSentence(sentenceIndex + 1);
+      prebufferNextSentence(sentenceIndex + 2);
+    }
   }
 
   async function speakKokoroVoice(text, voiceChoice, onEnded, sentenceIndex) {

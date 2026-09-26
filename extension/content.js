@@ -41,17 +41,64 @@
   function splitIntoSentences(text) {
     if (!text || !text.trim()) return [];
     text = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
-    text = text.replace(/([0-9]+)\.([0-9]+)/g, '$1\uE000$2');
-    text = text.replace(/\b([A-Za-z])\./g, '$1\uE000');
-    text = text.replace(/(https?:\/\/[^\s]+)/g, (m) => m.replace(/\./g, '\uE000'));
-    text = text.replace(/([a-zA-Z0-9._%+-]+)@([a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/g, (m) => m.replace(/\./g, '\uE000'));
-    text = text.replace(/\b(Dr|Mr|Mrs|Ms|Prof|Sr|Jr|vs|etc|al|Inc|Corp|Co|Ltd|Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\./gi, '$1\uE000');
+
+    // 1. Protect numbers with decimals and multi-dot dates (e.g. 3.5, 7.10, 7.10.2023, $19.99)
+    while (/(\d)\.(\d)/.test(text)) {
+      text = text.replace(/(\d)\.(\d)/g, (m, d1, d2) => d1 + '\uE000' + d2);
+    }
+
+    // 2. Protect email addresses
+    text = text.replace(/([a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+)/g, (m) => m.replace(/\./g, '\uE000'));
+
+    // 3. Protect URLs and domains
+    text = text.replace(/(https?:\/\/[^\s]+)/gi, (m) => m.replace(/\./g, '\uE000'));
+    text = text.replace(/([a-zA-Z0-9_-]+\.(?:com|org|net|io|co|il|edu|gov|ai|app|dev|me)[^\s]*)/gi, (m) => m.replace(/\./g, '\uE000'));
+
+    // 4. Protect a.m. / p.m.
+    text = text.replace(/\b([ap]\.m\.)/gi, (m) => m.replace(/\./g, '\uE000'));
+
+    // 5. Protect English single letter initials followed by capital letter
+    text = text.replace(/\b([A-Z])\.\s+(?=[A-Z])/g, '$1\uE000 ');
+
+    // 6. Protect Hebrew initials followed by Hebrew word (e.g. א. כהן, י. שמעוני)
+    text = text.replace(/(^|[\s("״'׳])([א-ת])\.\s+(?=[א-ת])/g, (m, p1, p2) => p1 + p2 + '\uE000 ');
+
+    // 7. Protect common English abbreviations & titles
+    const englishAbbrevs = [
+      'dr', 'mr', 'mrs', 'ms', 'prof', 'sr', 'jr', 'vs', 'etc',
+      'u.s.', 'u.s', 'e.g.', 'e.g', 'i.e.', 'i.e',
+      'inc', 'ltd', 'corp', 'co', 'gen', 'col', 'gov', 'sen', 'rep',
+      'st', 'ave', 'blvd', 'dept', 'no', 'fig', 'vol', 'al',
+      'jan', 'feb', 'mar', 'apr', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'
+    ];
+    englishAbbrevs.forEach(abbr => {
+      const esc = abbr.replace(/\./g, '\\.');
+      const regex = new RegExp('\\b' + esc + (abbr.endsWith('.') ? '' : '\\.'), 'gi');
+      text = text.replace(regex, (m) => m.replace(/\./g, '\uE000'));
+    });
+
+    // 8. Protect Hebrew title abbreviations before names (e.g. פרופ., ופרופ., ד"ר., עו"ד., וכו.)
+    const hebrewDotAbbrs = [
+      /(^|[\s("״'׳])([בלמכושה]?פרופ)\./g,
+      /(^|[\s("״'׳])([בלמכושה]?ד["״'׳]ר)\./g,
+      /(^|[\s("״'׳])([בלמכושה]?עו["״'׳]ד)\./g,
+      /(^|[\s("״'׳])([בלמכושה]?רו["״'׳]ח)\./g,
+      /(^|[\s("״'׳])(וכו)\./g
+    ];
+    hebrewDotAbbrs.forEach(regex => {
+      text = text.replace(regex, (m, p1, p2) => p1 + p2 + '\uE000');
+    });
+
+    // 9. Protect dialogue quotes ending in punctuation when followed by lowercase attribution
+    text = text.replace(/([.!?׃]['"”’\)\]]*)\s+([a-z])/g, (match, p1, p2) => {
+      return p1.replace(/\./g, '\uE000').replace(/!/g, '\uE001').replace(/\?/g, '\uE002') + ' ' + p2;
+    });
 
     const regex = /([^.!?\n׃]+(?:[.!?׃]+['"”’\)\]]*|(?=[\n]|$))|[^.!?\n׃]+$)/g;
     const matches = text.match(regex) || [text];
 
     return matches
-      .map(s => s.replace(/\uE000/g, '.').trim())
+      .map(s => s.replace(/\uE000/g, '.').replace(/\uE001/g, '!').replace(/\uE002/g, '?').trim())
       .filter(s => s.length > 0 && /[\p{L}\p{N}]/u.test(s));
   }
 
@@ -512,21 +559,60 @@
       if (localAudioDataUrl) {
         playAudioUrl(localAudioDataUrl, textToSpeak, mySeq, true, offset);
         prefetchSentence(index + 1);
+        prefetchSentence(index + 2);
         return;
       }
     }
 
+    // Direct local synthesis if voice is local (e.g. he-roboshaul or kokoro)
+    if (state.engineAvailable && (!voice.startsWith('edge-') || voice.includes('roboshaul'))) {
+      chrome.runtime.sendMessage({
+        action: 'synthesize-local',
+        text: textToSpeak,
+        voice,
+        speed: 1.0
+      }, (localResp) => {
+        if (state.sequenceId !== mySeq) return;
+        if (localResp && localResp.success && localResp.audioDataUrl) {
+          playAudioUrl(localResp.audioDataUrl, textToSpeak, mySeq, true, offset);
+          prefetchSentence(index + 1);
+          prefetchSentence(index + 2);
+        } else if (isHebrew(textToSpeak)) {
+          // Fallback to Edge Avri if local Hebrew engine fails
+          chrome.runtime.sendMessage({
+            action: 'synthesize-edge-tts',
+            text: textToSpeak,
+            voice: 'edge-he-avri',
+            rate: 1.0
+          }, (edgeResp) => {
+            if (state.sequenceId !== mySeq) return;
+            if (edgeResp && edgeResp.success && edgeResp.audioDataUrl) {
+              playAudioUrl(edgeResp.audioDataUrl, textToSpeak, mySeq, false, offset);
+            } else {
+              console.warn('[GuyReader] Hebrew neural voice failed. Carmit fallback blocked.');
+              onSentenceFinished();
+            }
+          });
+        } else {
+          speakWebSpeech(textToSpeak, mySeq, offset);
+        }
+      });
+      return;
+    }
+
     // Fallback: Edge TTS via background.js
-    if (state.voice.startsWith('edge-') || isHebrew(textToSpeak)) {
+    if (voice.startsWith('edge-') || isHebrew(textToSpeak)) {
+      const edgeVoice = isHebrew(textToSpeak) ? (voice.startsWith('edge-') ? voice : 'edge-he-avri') : (voice.startsWith('edge-') ? voice : 'edge-en-jenny');
       chrome.runtime.sendMessage({
         action: 'synthesize-edge-tts',
         text: textToSpeak,
-        voice,
+        voice: edgeVoice,
         rate: 1.0
       }, (resp) => {
         if (state.sequenceId !== mySeq) return;
         if (resp && resp.success && resp.audioDataUrl) {
           playAudioUrl(resp.audioDataUrl, textToSpeak, mySeq, false, offset);
+          prefetchSentence(index + 1);
         } else if (state.engineAvailable) {
           chrome.runtime.sendMessage({
             action: 'synthesize-local',
@@ -588,7 +674,11 @@
       try {
         const action = voice.startsWith('edge-') ? 'synthesize-edge-tts' : 'synthesize-local';
         chrome.runtime.sendMessage({action,text:item.text.slice(offset),voice,speed:1.0,rate:1.0}, resp => {
-          resolve(generation === state.generation && !chrome.runtime.lastError && resp?.success ? resp.audioDataUrl : null);
+          const audioUrl = (generation === state.generation && !chrome.runtime.lastError && resp?.success) ? resp.audioDataUrl : null;
+          resolve(audioUrl);
+          if (audioUrl && index + 1 < state.sentences.length) {
+            prefetchSentence(index + 1);
+          }
         });
       } catch (_) { resolve(null); }
     });

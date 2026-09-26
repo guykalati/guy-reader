@@ -75,8 +75,52 @@ def detect_language(text: str) -> str:
     return "en"
 
 
+HEBREW_ABBREVIATIONS = [
+    (r'ד[\"״\'׳]ר', 'דוקטור', 'הדוקטור'),
+    (r'פרופ[\'\.׳]|פרופ(?=[\s\.,:;?!—–]|$)', 'פרופסור', 'הפרופסור'),
+    (r'עו[\"״\'׳]ד', 'עורך דין', 'עורך הדין'),
+    (r'רו[\"״\'׳]ח', 'רואה חשבון', 'רואה החשבון'),
+    (r'וכו[\'׳\.]|וכ[\"״]ו', 'וכולי', 'וכולי'),
+    (r'וכיו[\"״\'׳]ב', 'וכיוצא בזה', 'וכיוצא בזה'),
+    (r'ארה[\"״\'׳]ב', 'ארצות הברית', 'ארצות הברית'),
+    (r'ש[\"״\'׳]ח', 'שקלים', 'השקלים'),
+    (r'צה[\"״\'׳]ל', 'צהל', 'צהל'),
+    (r'רה[\"״\'׳]מ', 'ראש הממשלה', 'ראש הממשלה'),
+    (r'ח[\"״\'׳]כ', 'חבר כנסת', 'חבר הכנסת'),
+    (r'ת[\"״\'׳]א', 'תל אביב', 'תל אביב'),
+    (r'יו[\"״\'׳]ר', 'יושב ראש', 'יושב הראש'),
+    (r'מנכ[\"״\'׳]ל', 'מנכל', 'המנכל'),
+    (r'חו[\"״\'׳]ל', 'חוץ לארץ', 'חוץ לארץ'),
+    (r'קמ[\"״\'׳]ש', 'קילומטר לשעה', 'קילומטר לשעה'),
+]
+
+
+def expand_hebrew_abbreviations(text: str) -> str:
+    """Expand Hebrew acronyms and abbreviations with prefix awareness for natural speech."""
+    if not text:
+        return text
+    expanded = text
+    for pattern, base_rep, def_rep in HEBREW_ABBREVIATIONS:
+        def replace_match(m):
+            lead = m.group(1) or ''
+            prefix = (m.group(2) or '').replace('-', '')
+            if prefix == 'ה':
+                rep = def_rep
+            elif prefix.endswith('ה'):
+                rep = prefix[:-1] + def_rep
+            elif prefix:
+                rep = prefix + base_rep
+            else:
+                rep = base_rep
+            return lead + rep
+
+        regex = rf'(^|[\s\(\"\'״׳])([בלמכושה]?[-]?){pattern}(?=[\s\(\"\'״׳\.,:;?!—–]|$)'
+        expanded = re.sub(regex, replace_match, expanded)
+    return expanded
+
+
 def split_sentences(raw_text: str) -> list[str]:
-    """Split raw text into clean sentences without breaking on decimals, URLs, or abbreviations."""
+    """Split raw text into clean sentences without breaking on decimals, URLs, dates, or abbreviations."""
     if not raw_text:
         return []
     cleaned = raw_text.replace("\r\n", "\n").replace("\r", "\n").strip()
@@ -87,8 +131,9 @@ def split_sentences(raw_text: str) -> list[str]:
 
     PLACEHOLDER = chr(0xE000)
 
-    # 1. Protect numbers with decimals (e.g. 3.5, $19.99)
-    text = re.sub(r"(\d)\.(\d)", rf"\g<1>{PLACEHOLDER}\g<2>", text)
+    # 1. Protect numbers with decimals and multi-dot dates (e.g. 3.5, $19.99, 7.10, 7.10.2023)
+    while re.search(r"(\d)\.(\d)", text):
+        text = re.sub(r"(\d)\.(\d)", rf"\g<1>{PLACEHOLDER}\g<2>", text)
 
     # 2. Protect email addresses
     text = re.sub(
@@ -97,15 +142,30 @@ def split_sentences(raw_text: str) -> list[str]:
         text,
     )
 
-    # 3. Protect URLs
+    # 3. Protect URLs and domains
     text = re.sub(
         r"(https?://[^\s]+)",
         lambda m: m.group(0).replace(".", PLACEHOLDER),
         text,
         flags=re.IGNORECASE,
     )
+    text = re.sub(
+        r"([a-zA-Z0-9_-]+\.(?:com|org|net|io|co|il|edu|gov|ai|app|dev|me)[^\s]*)",
+        lambda m: m.group(0).replace(".", PLACEHOLDER),
+        text,
+        flags=re.IGNORECASE,
+    )
 
-    # 4. Protect abbreviations (e.g. Dr., U.S., e.g., i.e., Mr., Mrs., etc.)
+    # 4. Protect a.m. / p.m.
+    text = re.sub(r"\b([ap]\.m\.)", lambda m: m.group(0).replace(".", PLACEHOLDER), text, flags=re.IGNORECASE)
+
+    # 5. Protect English single letter initials (e.g. John F. Kennedy)
+    text = re.sub(r"\b([A-Z])\.\s+(?=[A-Z])", rf"\g<1>{PLACEHOLDER} ", text)
+
+    # 6. Protect Hebrew initials followed by Hebrew word (e.g. א. כהן, י. שמעוני)
+    text = re.sub(r"(^|[\s\(\"\'״׳])([א-ת])\.\s+(?=[א-ת])", rf"\g<1>\g<2>{PLACEHOLDER} ", text)
+
+    # 7. Protect common English abbreviations & titles
     abbreviations = [
         r"Dr\.", r"Mr\.", r"Mrs\.", r"Ms\.", r"Prof\.", r"Sr\.", r"Jr\.",
         r"vs\.", r"etc\.", r"e\.g\.", r"i\.e\.", r"U\.S\.", r"Inc\.", r"Corp\.",
@@ -119,7 +179,25 @@ def split_sentences(raw_text: str) -> list[str]:
             flags=re.IGNORECASE,
         )
 
-    # 5. Split on sentence terminals: . ! ? ׃ followed by quotes or whitespace
+    # 8. Protect Hebrew title abbreviations before names (e.g. פרופ., ופרופ., ד"ר., עו"ד., וכו.)
+    hebrew_dot_abbrs = [
+        r"[בלמכושה]?פרופ\.",
+        r"[בלמכושה]?ד[\"״\'׳]ר\.",
+        r"[בלמכושה]?עו[\"״\'׳]ד\.",
+        r"[בלמכושה]?רו[\"״\'׳]ח\.",
+        r"וכו\."
+    ]
+    for habbr in hebrew_dot_abbrs:
+        text = re.sub(rf"(^|[\s\(\"\'״׳]){habbr}", lambda m: m.group(0).replace(".", PLACEHOLDER), text)
+
+    # 9. Protect dialogue quotes ending in punctuation when followed by lowercase attribution
+    text = re.sub(
+        r"([.!?׃]['\"”’\)\]]*)\s+([a-z])",
+        lambda m: m.group(1).replace(".", PLACEHOLDER) + " " + m.group(2),
+        text,
+    )
+
+    # 10. Split on sentence terminals: . ! ? ׃ followed by quotes or whitespace
     regex = r"[^.!?\n׃]+(?:[.!?׃]+['\"”’\)\]]*|(?=[\n]|$))|[^.!?\n׃]+$"
     matches = [m.group(0) for m in re.finditer(regex, text)]
     if not matches:
@@ -249,11 +327,12 @@ class SpeechEngine:
 
     def _synthesize_roboshaul(self, text: str, speed: float) -> SynthesisResult:
         """Synthesize Hebrew text via local Robo-Shaul (Tacotron2 + WaveGlow)."""
-        cache_key = (text.strip(), round(float(speed), 2))
+        expanded = expand_hebrew_abbreviations(text)
+        cache_key = (expanded.strip(), round(float(speed), 2))
         if cache_key in self._roboshaul_cache:
             return self._roboshaul_cache[cache_key]
 
-        audio_bytes, sample_rate, duration = self._roboshaul.synthesize(text, speed=speed)
+        audio_bytes, sample_rate, duration = self._roboshaul.synthesize(expanded, speed=speed)
         result = SynthesisResult(
             audio_bytes=audio_bytes,
             sample_rate=sample_rate,
