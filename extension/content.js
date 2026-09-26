@@ -30,6 +30,7 @@
     engineAvailable: false, // Will be set after health check
     cleanReaderMode: false,
     cleanReaderOriginal: null, // Stashed original DOM for toggle-back
+    sentenceTransitionTimer: null,
   };
 
   chrome.storage?.local.get({guy_reader_sync:false,guy_reader_voice:'af_sarah'}, prefs => {
@@ -94,11 +95,12 @@
       return p1.replace(/\./g, '\uE000').replace(/!/g, '\uE001').replace(/\?/g, '\uE002') + ' ' + p2;
     });
 
-    const regex = /([^.!?\n׃]+(?:[.!?׃]+['"”’\)\]]*|(?=[\n]|$))|[^.!?\n׃]+$)/g;
+    // 10. Split on terminal punctuation and bullet clause markers: . ! ? ׃ • ▪ ▫ ◆ ◇ ✦
+    const regex = /([^.!?\n׃•▪▫◆◇✦]+(?:[.!?׃•▪▫◆◇✦]+['"”’\)\]]*|(?=[\n]|$))|[^.!?\n׃•▪▫◆◇✦]+$)/g;
     const matches = text.match(regex) || [text];
 
     return matches
-      .map(s => s.replace(/\uE000/g, '.').replace(/\uE001/g, '!').replace(/\uE002/g, '?').trim())
+      .map(s => s.replace(/\uE000/g, '.').replace(/\uE001/g, '!').replace(/\uE002/g, '?').replace(/^[•▪▫◆◇✦\s\t-]+|[•▪▫◆◇✦\s\t-]+$/gu, '').trim())
       .filter(s => s.length > 0 && /[\p{L}\p{N}]/u.test(s));
   }
 
@@ -475,6 +477,10 @@
   }
 
   function stopReading() {
+    if (typeof clearTimeout !== 'undefined' && state.sentenceTransitionTimer) {
+      clearTimeout(state.sentenceTransitionTimer);
+      state.sentenceTransitionTimer = null;
+    }
     state.isActive = false;
     state.isPlaying = false;
     state.isPaused = false;
@@ -487,6 +493,10 @@
   }
 
   function pauseReading() {
+    if (typeof clearTimeout !== 'undefined' && state.sentenceTransitionTimer) {
+      clearTimeout(state.sentenceTransitionTimer);
+      state.sentenceTransitionTimer = null;
+    }
     state.isPaused = true;
     state.isPlaying = false;
     if (state.audioElement && !state.audioElement.paused) {
@@ -522,6 +532,10 @@
   }
 
   async function playSentence(index, continuous = false, offset = 0) {
+    if (typeof clearTimeout !== 'undefined' && state.sentenceTransitionTimer) {
+      clearTimeout(state.sentenceTransitionTimer);
+      state.sentenceTransitionTimer = null;
+    }
     if (index < 0 || index >= state.sentences.length) {
       stopReading();
       return;
@@ -939,7 +953,21 @@
   function onSentenceFinished() {
     if (!state.isPlaying) return;
     if (state.currentIndex + 1 < state.sentences.length) {
-      playSentence(state.currentIndex + 1, true);
+      const nextIndex = state.currentIndex + 1;
+      const seqId = state.sequenceId;
+      const pauseMs = Math.max(80, Math.round(220 / (state.speed || 1.0)));
+      if (typeof setTimeout !== 'undefined') {
+        if (typeof clearTimeout !== 'undefined' && state.sentenceTransitionTimer) {
+          clearTimeout(state.sentenceTransitionTimer);
+        }
+        state.sentenceTransitionTimer = setTimeout(() => {
+          state.sentenceTransitionTimer = null;
+          if (!state.isPlaying || state.isPaused || seqId !== state.sequenceId) return;
+          playSentence(nextIndex, true);
+        }, pauseMs);
+      } else {
+        playSentence(nextIndex, true);
+      }
     } else {
       stopReading();
     }

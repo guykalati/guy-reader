@@ -28,6 +28,7 @@
     requests: new Set(),
     activeUrl: null,
     previewFinish: null,
+    sentenceTransitionTimer: null,
     apiKeys: {
       eleven: localStorage.getItem('guy_reader_eleven_key') || localStorage.getItem('glaido_eleven_key') || '',
       google: localStorage.getItem('guy_reader_google_key') || localStorage.getItem('glaido_google_key') || ''
@@ -204,12 +205,12 @@
       return p1.replace(/\./g, '\uE000').replace(/!/g, '\uE001').replace(/\?/g, '\uE002') + ' ' + p2;
     });
 
-    // Split on terminal punctuation followed by optional quotes/parens
-    const regex = /([^.!?\n׃]+(?:[.!?׃]+['"”’\)\]]*|(?=[\n]|$))|[^.!?\n׃]+$)/g;
+    // 10. Split on terminal punctuation and bullet clause markers: . ! ? ׃ • ▪ ▫ ◆ ◇ ✦
+    const regex = /([^.!?\n׃•▪▫◆◇✦]+(?:[.!?׃•▪▫◆◇✦]+['"”’\)\]]*|(?=[\n]|$))|[^.!?\n׃•▪▫◆◇✦]+$)/g;
     const matches = text.match(regex) || [text];
 
     return matches
-      .map(s => s.replace(/\uE000/g, '.').replace(/\uE001/g, '!').replace(/\uE002/g, '?').trim())
+      .map(s => s.replace(/\uE000/g, '.').replace(/\uE001/g, '!').replace(/\uE002/g, '?').replace(/^[•▪▫◆◇✦\s\t-]+|[•▪▫◆◇✦\s\t-]+$/gu, '').trim())
       .filter(s => s.length > 0 && /[\p{L}\p{N}]/u.test(s));
   }
 
@@ -332,6 +333,10 @@
 
   // Speech Synthesizer Router
   function playSentence(index, continuous = false) {
+    if (state.sentenceTransitionTimer) {
+      clearTimeout(state.sentenceTransitionTimer);
+      state.sentenceTransitionTimer = null;
+    }
     if (index < 0 || index >= state.sentences.length) {
       stopSpeech();
       return;
@@ -444,25 +449,26 @@
   }
 
   // Next-sentence pre-buffering, owned by the current passage/settings generation.
-  async function prebufferNextSentence(index) {
+  function prebufferNextSentence(index) {
     if (index < 0 || index >= state.sentences.length || state.prebufferCache.has(index)) return;
     const text = state.sentences[index];
     const voice = voiceForSentence(text);
     if (!/^(af_|am_|edge-|he-roboshaul|roboshaul)/.test(voice)) return;
     const generation = state.generation;
-    try {
-      const url = await requestAudio(text, voice, generation);
-      if (url && generation === state.generation) {
-        const previous = state.prebufferCache.get(index);
-        if (previous) URL.revokeObjectURL(previous);
-        state.prebufferCache.set(index, url);
 
-        // Chain prebuffering: buffer subsequent sentence as soon as current prebuffer completes
-        if (index + 1 < state.sentences.length && !state.prebufferCache.has(index + 1)) {
-          prebufferNextSentence(index + 1);
-        }
+    const promise = requestAudio(text, voice, generation).then(url => {
+      if (generation !== state.generation && url) {
+        URL.revokeObjectURL(url);
+        return null;
       }
-    } catch (_) { /* Playback will retry or use the installed voice. */ }
+      // Chain prebuffering: buffer subsequent sentence as soon as current prebuffer completes
+      if (url && index + 1 < state.sentences.length && !state.prebufferCache.has(index + 1)) {
+        prebufferNextSentence(index + 1);
+      }
+      return url;
+    }).catch(() => null);
+
+    state.prebufferCache.set(index, promise);
   }
 
   function playOwnedAudio(url, text, playbackId, onEnded, sentenceIndex, voiceChoice) {
@@ -512,10 +518,11 @@
   async function speakKokoroVoice(text, voiceChoice, onEnded, sentenceIndex) {
     const generation = state.generation, playbackId = state.playbackId;
     try {
-      let url = state.prebufferCache.get(sentenceIndex);
+      let audioPromise = state.prebufferCache.get(sentenceIndex);
       state.prebufferCache.delete(sentenceIndex);
+      let url = audioPromise ? (typeof audioPromise.then === 'function' ? await audioPromise : audioPromise) : null;
       if (!url) url = await requestAudio(text, voiceChoice || 'af_sarah', generation);
-      if (!url) return;
+      if (!url || generation !== state.generation || playbackId !== state.playbackId) return;
       playOwnedAudio(url, text, playbackId, onEnded, sentenceIndex, voiceChoice);
     } catch (err) {
       if (generation !== state.generation || playbackId !== state.playbackId) return;
@@ -653,7 +660,15 @@
       state.connectedSegments = null;
     }
     if (state.currentIndex + 1 < state.sentences.length) {
-      playSentence(state.currentIndex + 1, true);
+      const nextIndex = state.currentIndex + 1;
+      const playbackId = state.playbackId;
+      const pauseMs = Math.max(80, Math.round(220 / (state.speed || 1.0)));
+      if (state.sentenceTransitionTimer) clearTimeout(state.sentenceTransitionTimer);
+      state.sentenceTransitionTimer = setTimeout(() => {
+        state.sentenceTransitionTimer = null;
+        if (!state.isPlaying || state.isPaused || playbackId !== state.playbackId) return;
+        playSentence(nextIndex, true);
+      }, pauseMs);
     } else {
       stopSpeech();
       state.currentIndex = 0; // Rewind to start so pressing play re-reads from sentence 0
@@ -663,6 +678,10 @@
   }
 
   function pauseSpeech() {
+    if (state.sentenceTransitionTimer) {
+      clearTimeout(state.sentenceTransitionTimer);
+      state.sentenceTransitionTimer = null;
+    }
     state.isPaused = true;
     setPlayPauseUI(false);
     if (window.speechSynthesis && window.speechSynthesis.speaking) {
@@ -681,12 +700,14 @@
     if (state.isPaused && state.currentIndex >= 0) {
       state.isPaused = false;
       setPlayPauseUI(true);
-      if (state.audioElement && state.audioElement.src) {
+      if (state.audioElement && state.audioElement.src && !state.audioElement.ended) {
         state.audioElement.play().catch(console.warn);
       } else if (state.backend === 'native' && window.webkit) {
         notifyNative('resume');
       } else if (window.speechSynthesis && window.speechSynthesis.paused) {
         window.speechSynthesis.resume();
+      } else if (state.audioElement && state.audioElement.ended && state.currentIndex + 1 < state.sentences.length) {
+        playSentence(state.currentIndex + 1, true);
       } else {
         // Restart pending synthesis too; never resume an obsolete native request.
         playSentence(state.currentIndex);
@@ -700,8 +721,14 @@
 
   function clearPrebufferCache() {
     if (state.prebufferCache) {
-      for (const url of state.prebufferCache.values()) {
-        try { URL.revokeObjectURL(url); } catch (e) {}
+      for (const entry of state.prebufferCache.values()) {
+        try {
+          if (typeof entry === 'string') {
+            URL.revokeObjectURL(entry);
+          } else if (entry && typeof entry.then === 'function') {
+            entry.then(url => { if (url) URL.revokeObjectURL(url); }).catch(() => {});
+          }
+        } catch (e) {}
       }
       state.prebufferCache.clear();
     }
@@ -733,6 +760,10 @@
 
   function abortAndResetPlayback(notify = true) {
     state.generation++;
+    if (state.sentenceTransitionTimer) {
+      clearTimeout(state.sentenceTransitionTimer);
+      state.sentenceTransitionTimer = null;
+    }
     stopCurrentAudio(notify);
     state.backend = null;
     state.connectedSegments = null;

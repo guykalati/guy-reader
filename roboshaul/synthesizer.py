@@ -59,6 +59,8 @@ def has_niqqud(text: str) -> bool:
 class RoboShaulSynthesizer:
     """High-performance local Hebrew speech synthesizer for Robo-Shaul."""
 
+    _global_load_lock = threading.Lock()
+
     def __init__(self, models_dir: Path | str | None = None, device: str | None = None, use_denoiser: bool = False):
         if models_dir is not None:
             self.models_dir = Path(models_dir)
@@ -99,7 +101,7 @@ class RoboShaulSynthesizer:
 
     def load_models(self) -> bool:
         """Load Tacotron 2 and WaveGlow models into memory."""
-        with self._lock:
+        with RoboShaulSynthesizer._global_load_lock:
             if self._loaded:
                 return True
 

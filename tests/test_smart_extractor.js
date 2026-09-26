@@ -75,12 +75,12 @@
       return p1.replace(/\./g, '\uE000').replace(/!/g, '\uE001').replace(/\?/g, '\uE002') + ' ' + p2;
     });
 
-    // Split on terminal punctuation followed by optional quotes/parens
-    const regex = /([^.!?\n׃]+(?:[.!?׃]+['"”’\)\]]*|(?=[\n]|$))|[^.!?\n׃]+$)/g;
+    // 10. Split on terminal punctuation and bullet clause markers: . ! ? ׃ • ▪ ▫ ◆ ◇ ✦
+    const regex = /([^.!?\n׃•▪▫◆◇✦]+(?:[.!?׃•▪▫◆◇✦]+['"”’\)\]]*|(?=[\n]|$))|[^.!?\n׃•▪▫◆◇✦]+$)/g;
     const matches = text.match(regex) || [text];
 
     return matches
-      .map(s => s.replace(/\uE000/g, '.').replace(/\uE001/g, '!').replace(/\uE002/g, '?').trim())
+      .map(s => s.replace(/\uE000/g, '.').replace(/\uE001/g, '!').replace(/\uE002/g, '?').replace(/^[•▪▫◆◇✦\s\t-]+|[•▪▫◆◇✦\s\t-]+$/gu, '').trim())
       .filter(s => s.length > 0 && /[\p{L}\p{N}]/u.test(s));
   }
 
@@ -168,6 +168,14 @@
   assert(splitSentences("").length === 0, "Empty string returns empty array");
   assert(splitSentences("   \n\n  ").length === 0, "Whitespace only returns empty array");
   assert(splitSentences("...").length === 0, "Punctuation without letters/digits returns empty array");
+
+  // Bullet and Sub-Headline Separators (Israel Hayom style)
+  const israelHayomBulletText = '1,000 ימים של הפעלת כוח שברו את הארכיטקטורה הישנה של האזור, ופתחו בפני ישראל חלון היסטורי במרחב גיאוגרפי חדש • אבל בזמן שטורקיה והמפרציות בוראות מציאות של נמלים, כבלים, מסילות וצירי סחר - בארץ מדשדשים • מ"כיפת סיליקון" ועד הפיכתנו לצומת האמון של האזור: תוכנית הפעולה שתבטיח ניצחון גם ביום שאחרי';
+  const bulletSentences = splitSentences(israelHayomBulletText);
+  assert(bulletSentences.length === 3, "Splits Israel Hayom bullet-separated subheadlines into 3 distinct sentences");
+  assert(bulletSentences[0] === '1,000 ימים של הפעלת כוח שברו את הארכיטקטורה הישנה של האזור, ופתחו בפני ישראל חלון היסטורי במרחב גיאוגרפי חדש', "First bullet clause captured without bullet symbol");
+  assert(bulletSentences[1] === 'אבל בזמן שטורקיה והמפרציות בוראות מציאות של נמלים, כבלים, מסילות וצירי סחר - בארץ מדשדשים', "Second bullet clause captured without bullet symbol");
+  assert(bulletSentences[2] === 'מ"כיפת סיליקון" ועד הפיכתנו לצומת האמון של האזור: תוכנית הפעולה שתבטיח ניצחון גם ביום שאחרי', "Third bullet clause captured without bullet symbol");
 
   // 2. Speed stepping and clamping tests
   function clamp(val, min, max) {

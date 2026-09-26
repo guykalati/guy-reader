@@ -197,15 +197,15 @@ def split_sentences(raw_text: str) -> list[str]:
         text,
     )
 
-    # 10. Split on sentence terminals: . ! ? ׃ followed by quotes or whitespace
-    regex = r"[^.!?\n׃]+(?:[.!?׃]+['\"”’\)\]]*|(?=[\n]|$))|[^.!?\n׃]+$"
+    # 10. Split on sentence terminals and bullet clause markers: . ! ? ׃ • ▪ ▫ ◆ ◇ ✦
+    regex = r"[^.!?\n׃•▪▫◆◇✦]+(?:[.!?׃•▪▫◆◇✦]+['\"”’\)\]]*|(?=[\n]|$))|[^.!?\n׃•▪▫◆◇✦]+$"
     matches = [m.group(0) for m in re.finditer(regex, text)]
     if not matches:
         matches = [text]
 
     results = []
     for s in matches:
-        restored = s.replace(PLACEHOLDER, ".").strip()
+        restored = s.replace(PLACEHOLDER, ".").strip(" \t\r\n•▪▫◆◇✦-–—")
         # Only keep if contains at least one letter or digit
         if restored and re.search(r"[\w\u0590-\u05FF]", restored):
             results.append(restored)
@@ -220,6 +220,11 @@ class SynthesisResult:
     duration_seconds: float
     language: str
     words: list[dict] = field(default_factory=list)
+
+
+_shared_kokoro = None
+_shared_roboshaul = None
+_shared_engine_lock = threading.Lock()
 
 
 class SpeechEngine:
@@ -240,27 +245,38 @@ class SpeechEngine:
         self._init_roboshaul()
 
     def _init_kokoro(self):
+        global _shared_kokoro
         if Kokoro and self.kokoro_model_path.exists() and self.kokoro_voices_path.exists():
-            try:
-                self._kokoro = Kokoro(
-                    str(self.kokoro_model_path),
-                    str(self.kokoro_voices_path),
-                )
-                self._warmup_background()
-            except Exception as e:
-                print(f"[SpeechEngine] Error initializing Kokoro: {e}")
+            with _shared_engine_lock:
+                if _shared_kokoro is not None:
+                    self._kokoro = _shared_kokoro
+                    return
+                try:
+                    self._kokoro = Kokoro(
+                        str(self.kokoro_model_path),
+                        str(self.kokoro_voices_path),
+                    )
+                    _shared_kokoro = self._kokoro
+                    self._warmup_background()
+                except Exception as e:
+                    print(f"[SpeechEngine] Error initializing Kokoro: {e}")
 
     def _init_roboshaul(self):
+        global _shared_roboshaul
         if RoboShaulSynthesizer:
-            try:
-                synth = RoboShaulSynthesizer(self.models_dir / "roboshaul")
-                if synth.is_available():
-                    self._roboshaul = synth
-                    print("[SpeechEngine] Robo-Shaul synthesizer detected and ready.")
-                    import threading
-                    threading.Thread(target=synth.load_models, daemon=True).start()
-            except Exception as e:
-                print(f"[SpeechEngine] Notice initializing Robo-Shaul: {e}")
+            with _shared_engine_lock:
+                if _shared_roboshaul is not None:
+                    self._roboshaul = _shared_roboshaul
+                    return
+                try:
+                    synth = RoboShaulSynthesizer(self.models_dir / "roboshaul")
+                    if synth.is_available():
+                        self._roboshaul = synth
+                        _shared_roboshaul = synth
+                        print("[SpeechEngine] Robo-Shaul synthesizer detected and ready.")
+                        threading.Thread(target=synth.load_models, daemon=True).start()
+                except Exception as e:
+                    print(f"[SpeechEngine] Notice initializing Robo-Shaul: {e}")
 
     def _warmup_background(self):
         """Warm up ONNX model execution graphs in background to eliminate cold start latency on M4."""

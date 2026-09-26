@@ -91,7 +91,7 @@ function extension(options = {}) {
     else if(options.failEdge && msg.action==='synthesize-edge-tts')callback({success:false,error:'offline'});
     else requests.push({msg,resolve(){callback({success:true,audioDataUrl:'data:'+msg.text});}});
   }}};
-  vm.runInNewContext(fs.readFileSync('extension/content.js','utf8'),{window,document,chrome,Audio,console,NodeFilter:{SHOW_TEXT:4},CSS:{highlights},Highlight:class {constructor(range){this.range=range;}},SpeechSynthesisUtterance:class {constructor(text){this.text=text;}},setInterval(){},clearInterval(){},URL:{revokeObjectURL(){}},alert(msg){alerts.push(msg);}});
+  vm.runInNewContext(fs.readFileSync('extension/content.js','utf8'),{window,document,chrome,Audio,console,NodeFilter:{SHOW_TEXT:4},CSS:{highlights},Highlight:class {constructor(range){this.range=range;}},SpeechSynthesisUtterance:class {constructor(text){this.text=text;}},setTimeout(fn){fn();},clearTimeout(){},setInterval(){},clearInterval(){},URL:{revokeObjectURL(){}},alert(msg){alerts.push(msg);}});
   return{requests,plays,audios,nodes,paragraph,highlights,utterances,events,textNode,alerts,getShowMoreClicked:()=>showMoreClicked,send(action){receive({action},{},()=>{});},settle:()=>new Promise(r=>setImmediate(r))};
 }
 test('extension remains paused when pending local synthesis finishes',async()=>{

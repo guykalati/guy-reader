@@ -6,7 +6,7 @@ def break_to_letter_and_rebuild(string):
     if not string:
         return []
     string = string.replace('…', '...')
-    punct_set = set(',:;!?()[]—–.')
+    punct_set = set(',:;!?()[]—–.•▪▫◆◇✦·|~')
     cleaned = string.strip('\"\'״׳«»“”')
     if not cleaned:
         return []
@@ -36,7 +36,7 @@ def break_to_letter_and_rebuild(string):
     tokens = []
     tokens.extend(lead)
     if word_core:
-        sub_parts = re.split(r'([,:;?!—–])', word_core)
+        sub_parts = re.split(r'([,:;?!—–•▪▫◆◇✦·|~])', word_core)
         for sp in sub_parts:
             if sp:
                 tokens.append(sp)
@@ -769,7 +769,7 @@ def map_punct_token(token):
         return ". "
     elif token == ':':
         return ": "
-    elif token in (';', '—', '–', '-'):
+    elif token in (';', '—', '–', '-', '•', '▪', '▫', '◆', '◇', '✦', '·', '|', '~'):
         return " - "
     elif token == '?':
         return "? "
@@ -809,7 +809,7 @@ def HebrewToEnglish(sentence, index=0):
                 lead_punct.append(word[0])
                 word = word[1:]
             trail_punct = []
-            while word and word[-1] in ",:;?!—–.)]":
+            while word and word[-1] in ",:;?!—–.)]•▪▫◆◇✦·|~":
                 trail_punct.insert(0, word[-1])
                 word = word[:-1]
 
