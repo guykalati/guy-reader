@@ -6,6 +6,7 @@ __pycache__/
 .pytest_cache/
 *.log
 server.log
+*.pid
 
 # Virtual Environments
 .venv*/
