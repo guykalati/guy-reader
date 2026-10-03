@@ -955,7 +955,8 @@
     if (state.currentIndex + 1 < state.sentences.length) {
       const nextIndex = state.currentIndex + 1;
       const seqId = state.sequenceId;
-      const pauseMs = Math.max(80, Math.round(220 / (state.speed || 1.0)));
+      // Audio is already trimmed server-side; only a short natural breath is needed.
+      const pauseMs = Math.max(20, Math.round(90 / (state.speed || 1.0)));
       if (typeof setTimeout !== 'undefined') {
         if (typeof clearTimeout !== 'undefined' && state.sentenceTransitionTimer) {
           clearTimeout(state.sentenceTransitionTimer);

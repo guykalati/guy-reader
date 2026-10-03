@@ -213,6 +213,23 @@ def split_sentences(raw_text: str) -> list[str]:
     return results
 
 
+def trim_silence(samples: np.ndarray, sample_rate: int, threshold: float = 0.01, pad_ms: int = 30) -> np.ndarray:
+    """Trim dead air from both ends, keeping a short pad and a tiny fade-out to avoid clicks."""
+    if samples.size == 0:
+        return samples
+    above = np.where(np.abs(samples) > threshold)[0]
+    if above.size == 0:
+        return samples
+    pad = int(pad_ms * sample_rate / 1000)
+    start = max(0, above[0] - pad)
+    end = min(len(samples), above[-1] + pad)
+    out = samples[start:end].copy()
+    fade = min(int(0.008 * sample_rate), len(out))
+    if fade > 0:
+        out[-fade:] *= np.linspace(1.0, 0.0, fade, dtype=np.float32)
+    return out
+
+
 @dataclass
 class SynthesisResult:
     audio_bytes: bytes
@@ -322,6 +339,7 @@ class SpeechEngine:
                 speed=float(speed),
                 lang="en-us",
             )
+            samples = trim_silence(np.asarray(samples, dtype=np.float32), sample_rate)
             # Write WAV bytes in-memory
             buf = io.BytesIO()
             sf.write(buf, samples, sample_rate, format="WAV")

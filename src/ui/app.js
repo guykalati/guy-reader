@@ -662,7 +662,7 @@
     if (state.currentIndex + 1 < state.sentences.length) {
       const nextIndex = state.currentIndex + 1;
       const playbackId = state.playbackId;
-      const pauseMs = Math.max(80, Math.round(220 / (state.speed || 1.0)));
+      const pauseMs = Math.max(20, Math.round(90 / (state.speed || 1.0)));
       if (state.sentenceTransitionTimer) clearTimeout(state.sentenceTransitionTimer);
       state.sentenceTransitionTimer = setTimeout(() => {
         state.sentenceTransitionTimer = null;
