@@ -331,6 +331,10 @@ class SpeechEngine:
         if voice and voice.startswith("edge-"):
             return self._synthesize_edge(text, voice, speed)
 
+        # ElevenLabs Multilingual v2
+        if voice and voice.startswith("eleven-"):
+            return self._synthesize_elevenlabs(text, voice, speed)
+
         if lang == "en" and self._kokoro:
             kokoro_voice = voice if voice and voice.startswith(("af_", "am_", "bf_", "bm_")) else "af_sarah"
             samples, sample_rate = self._kokoro.create(
@@ -434,6 +438,53 @@ class SpeechEngine:
             if result_lang == "he":
                 raise RuntimeError(f"Edge TTS Hebrew synthesis failed ({edge_voice}): {e}")
             raise RuntimeError(f"Edge TTS synthesis failed ({edge_voice}): {e}")
+
+    def _synthesize_elevenlabs(self, text: str, voice: str, speed: float) -> SynthesisResult:
+        """Synthesize text using ElevenLabs Multilingual v2 API with Edge TTS fallback."""
+        import json
+        import urllib.request
+        api_key = os.getenv("ELEVENLABS_API_KEY", "").strip()
+        lang = detect_language(text)
+        if not api_key:
+            print("[SpeechEngine] ELEVENLABS_API_KEY not set, falling back to Edge TTS")
+            fallback = "edge-he-avri" if lang == "he" else "edge-en-jenny"
+            return self._synthesize_edge(text, fallback, speed)
+
+        voice_ids = {
+            "eleven-rachel": "21m00Tcm4TlvDq8ikWAM",
+            "eleven-adam": "pNInz6obpgDQGcFmaJgB",
+            "eleven-charlie": "IKne3meq5aSn9XLyUdCD",
+        }
+        voice_id = voice_ids.get(voice, "21m00Tcm4TlvDq8ikWAM")
+        url = f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}"
+        payload = json.dumps({
+            "text": text,
+            "model_id": "eleven_multilingual_v2",
+            "voice_settings": {"stability": 0.5, "similarity_boost": 0.75}
+        }).encode("utf-8")
+        req = urllib.request.Request(
+            url,
+            data=payload,
+            headers={
+                "xi-api-key": api_key,
+                "Content-Type": "application/json",
+                "Accept": "audio/mpeg"
+            }
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                audio_bytes = resp.read()
+                duration = max(0.5, len(text) * 0.08 / max(0.5, speed))
+                return SynthesisResult(
+                    audio_bytes=audio_bytes,
+                    sample_rate=44100,
+                    duration_seconds=duration,
+                    language=lang,
+                )
+        except Exception as e:
+            print(f"[SpeechEngine] ElevenLabs synthesis failed ({e}), falling back to Edge TTS")
+            fallback = "edge-he-avri" if lang == "he" else "edge-en-jenny"
+            return self._synthesize_edge(text, fallback, speed)
 
     def _synthesize_native(self, text: str, speed: float, language: str) -> SynthesisResult:
         """Render installed macOS speech to WAV for offline English. Never used for Hebrew."""
@@ -571,6 +622,9 @@ def health():
         {"id": "he-roboshaul", "name": "Shaul (Hebrew Male - RoboShaul)", "lang": "he"},
         {"id": "edge-he-avri", "name": "Avri (Hebrew Male - Neural)", "lang": "he"},
         {"id": "edge-he-hila", "name": "Hila (Hebrew Female - Neural)", "lang": "he"},
+        {"id": "eleven-rachel", "name": "Rachel (ElevenLabs Multilingual)", "lang": "mul"},
+        {"id": "eleven-adam", "name": "Adam (ElevenLabs Multilingual)", "lang": "mul"},
+        {"id": "eleven-charlie", "name": "Charlie (ElevenLabs Multilingual)", "lang": "mul"},
     ]
     return {
         "status": "ok",

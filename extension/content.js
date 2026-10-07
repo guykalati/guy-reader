@@ -31,11 +31,13 @@
     cleanReaderMode: false,
     cleanReaderOriginal: null, // Stashed original DOM for toggle-back
     sentenceTransitionTimer: null,
+    elevenApiKey: '',
   };
 
-  chrome.storage?.local.get({guy_reader_sync:false,guy_reader_voice:'af_sarah'}, prefs => {
+  chrome.storage?.local.get({ guy_reader_sync: false, guy_reader_voice: 'af_sarah', guy_reader_eleven_key: '' }, prefs => {
     state.synchronized = prefs.guy_reader_sync;
     state.voice = prefs.guy_reader_voice;
+    state.elevenApiKey = prefs.guy_reader_eleven_key || '';
   });
 
   // 1. Sentence Splitting Helper
@@ -111,7 +113,7 @@
   function readableSource(root, junkSelectors) {
     let text = '';
     const segments = [];
-    const blockTags = new Set(['P','DIV','LI','H1','H2','H3','H4','H5','H6','BLOCKQUOTE','SECTION','ARTICLE']);
+    const blockTags = new Set(['P', 'DIV', 'LI', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'BLOCKQUOTE', 'SECTION', 'ARTICLE']);
     const appendSeparator = () => { if (text && !/\s$/u.test(text)) text += ' '; };
     const hidden = element => {
       if (!element) return false;
@@ -128,7 +130,7 @@
       if (!value) return;
       const start = text.length;
       text += value;
-      segments.push({node, textStart:start, textEnd:text.length});
+      segments.push({ node, textStart: start, textEnd: text.length });
     };
     const visit = node => {
       if (node.nodeType === 3) { appendText(node); return; }
@@ -146,7 +148,7 @@
       let node;
       while ((node = walker.nextNode())) appendText(node);
     }
-    return {text, segments};
+    return { text, segments };
   }
 
   // Helper to expand truncated tweets/posts on X before extraction
@@ -165,7 +167,7 @@
           btn.click();
         }
       }
-    } catch (_) {}
+    } catch (_) { }
   }
 
   // 2. Full Article DOM Extractor
@@ -212,7 +214,7 @@
       const candidates = Array.from(document.querySelectorAll(xSelector));
       mainContainer = candidates
         .filter(el => el.offsetParent !== null || el.offsetWidth > 0 || el.offsetHeight > 0)
-        .sort((a,b) => (b.innerText || b.textContent || '').length - (a.innerText || a.textContent || '').length)[0];
+        .sort((a, b) => (b.innerText || b.textContent || '').length - (a.innerText || a.textContent || '').length)[0];
     }
     if (!mainContainer) mainContainer = document.querySelector(mainSelectors);
     if (!mainContainer) mainContainer = document.body;
@@ -424,9 +426,11 @@
       if (e.target.closest('#guy-reader-floating-pill, input, textarea, select, button, a, [contenteditable="true"]')) return;
       const caret = document.caretPositionFromPoint?.(e.clientX, e.clientY);
       const range = !caret && document.caretRangeFromPoint?.(e.clientX, e.clientY);
-      chrome.runtime.sendMessage({action:'reader-focus'}, () => { void chrome.runtime.lastError; });
-      state.lastPoint = {node: caret?.offsetNode || range?.startContainer,
-        offset: caret?.offset ?? range?.startOffset, x:e.clientX, y:e.clientY};
+      chrome.runtime.sendMessage({ action: 'reader-focus' }, () => { void chrome.runtime.lastError; });
+      state.lastPoint = {
+        node: caret?.offsetNode || range?.startContainer,
+        offset: caret?.offset ?? range?.startOffset, x: e.clientX, y: e.clientY
+      };
       if (!state.isActive) return;
       const position = pointPosition(state.lastPoint);
       if (position) playSentence(position.index, false, position.offset);
@@ -447,7 +451,7 @@
     if (fromSelection) {
       const selection = window.getSelection?.();
       const selected = selection && !selection.isCollapsed
-        ? pointPosition({node:selection.anchorNode, offset:selection.anchorOffset}) : null;
+        ? pointPosition({ node: selection.anchorNode, offset: selection.anchorOffset }) : null;
       const point = selected || pointPosition(state.lastPoint);
       if (point) { startIndex = point.index; startOffset = point.offset; }
       else startIndex = getSelectionSentenceIndex(state.sentences);
@@ -465,7 +469,7 @@
     // Never replace a chosen Avri/Hila voice just to provide exact highlighting.
     if (state.voice.startsWith('edge-') && state.synchronized) {
       state.synchronized = false;
-      chrome.storage?.local.set({guy_reader_sync:false});
+      chrome.storage?.local.set({ guy_reader_sync: false });
       const mode = document.getElementById('guy-mode-select');
       if (mode) mode.value = 'neural';
     }
@@ -517,7 +521,7 @@
       state.isPaused = false;
       state.isPlaying = true;
       if (state.audioElement && state.audioElement.paused) {
-        state.audioElement.play().catch(() => {});
+        state.audioElement.play().catch(() => { });
       } else if ('speechSynthesis' in window && window.speechSynthesis.paused) {
         window.speechSynthesis.resume();
       } else {
@@ -553,15 +557,57 @@
     const sentenceItem = state.sentences[index];
     state.wordOffset = offset;
     const textToSpeak = sentenceItem.text.slice(offset);
-    const hebrewVoice = /he-|avri|hila|roboshaul|shaul/i.test(state.voice);
-    const voice = isHebrew(textToSpeak)
+    const hebrewVoice = /he-|avri|hila/i.test(state.voice);
+    const elevenVoice = state.voice && state.voice.startsWith('eleven-');
+    const voice = elevenVoice ? state.voice : (isHebrew(textToSpeak)
       ? (hebrewVoice ? state.voice : 'edge-he-avri')
-      : (hebrewVoice ? 'af_sarah' : state.voice);
+      : (hebrewVoice ? 'af_sarah' : state.voice));
 
     highlightSentenceOnPage(index);
-    if (state.synchronized && !isHebrew(textToSpeak) && !voice.startsWith('edge-')) {
+    if (state.synchronized && !isHebrew(textToSpeak) && !voice.startsWith('edge-') && !elevenVoice) {
       speakConnectedPassage(index, offset, mySeq);
       return;
+    }
+
+    // Try ElevenLabs synthesis if selected
+    if (voice.startsWith('eleven-')) {
+      if (!state.elevenApiKey) {
+        const key = prompt('Please enter your free ElevenLabs API Key (from elevenlabs.io):');
+        if (key && key.trim()) {
+          state.elevenApiKey = key.trim();
+          chrome.storage?.local.set({ guy_reader_eleven_key: state.elevenApiKey });
+        }
+      }
+      if (state.elevenApiKey) {
+        chrome.runtime.sendMessage({
+          action: 'synthesize-elevenlabs',
+          text: textToSpeak,
+          voice: voice,
+          key: state.elevenApiKey
+        }, (resp) => {
+          if (state.sequenceId !== mySeq) return;
+          if (resp && resp.success && resp.audioDataUrl) {
+            playAudioUrl(resp.audioDataUrl, textToSpeak, mySeq, false, offset);
+          } else {
+            console.warn('[GuyReader] ElevenLabs synthesis failed, falling back:', resp?.error);
+            const fb = isHebrew(textToSpeak) ? 'edge-he-avri' : 'edge-en-jenny';
+            chrome.runtime.sendMessage({
+              action: 'synthesize-edge-tts',
+              text: textToSpeak,
+              voice: fb,
+              rate: 1.0
+            }, (edgeResp) => {
+              if (state.sequenceId !== mySeq) return;
+              if (edgeResp && edgeResp.success && edgeResp.audioDataUrl) {
+                playAudioUrl(edgeResp.audioDataUrl, textToSpeak, mySeq, false, offset);
+              } else {
+                speakWebSpeech(textToSpeak, mySeq, offset);
+              }
+            });
+          }
+        });
+        return;
+      }
     }
 
     // Try local speech engine first (proxied via background.js to bypass webpage CSP)
@@ -668,7 +714,7 @@
       if (isHebrew(item.text) !== hebrew || (text.length && text.length + item.text.length > 2500)) break;
       const from = i === index ? offset : 0;
       if (text) text += ' ';
-      segments.push({index:i, start:text.length, offset:from});
+      segments.push({ index: i, start: text.length, offset: from });
       text += item.text.slice(from);
     }
     speakWebSpeech(text, sequence, offset, segments);
@@ -687,7 +733,7 @@
     const request = new Promise(resolve => {
       try {
         const action = voice.startsWith('edge-') ? 'synthesize-edge-tts' : 'synthesize-local';
-        chrome.runtime.sendMessage({action,text:item.text.slice(offset),voice,speed:1.0,rate:1.0}, resp => {
+        chrome.runtime.sendMessage({ action, text: item.text.slice(offset), voice, speed: 1.0, rate: 1.0 }, resp => {
           const audioUrl = (generation === state.generation && !chrome.runtime.lastError && resp?.success) ? resp.audioDataUrl : null;
           resolve(audioUrl);
           if (audioUrl && index + 1 < state.sentences.length) {
@@ -710,7 +756,7 @@
         audioCtx = new Ctx();
       }
       if (audioCtx && audioCtx.state === 'suspended') {
-        audioCtx.resume().catch(() => {});
+        audioCtx.resume().catch(() => { });
       }
       return audioCtx;
     } catch (_) {
@@ -734,7 +780,7 @@
 
   function stopCurrentAudioOnly() {
     if (state.activeSourceNode) {
-      try { state.activeSourceNode.stop(); } catch (_) {}
+      try { state.activeSourceNode.stop(); } catch (_) { }
       state.activeSourceNode = null;
     }
     if (state.audioElement) {
@@ -781,7 +827,7 @@
 
     const cleanup = () => {
       if (createdBlobUrl || isBlobUrl) {
-        try { if (typeof URL !== 'undefined' && URL.revokeObjectURL) URL.revokeObjectURL(playableUrl); } catch (_) {}
+        try { if (typeof URL !== 'undefined' && URL.revokeObjectURL) URL.revokeObjectURL(playableUrl); } catch (_) { }
       }
     };
 
@@ -884,7 +930,7 @@
     // Neural audio without alignment metadata is explicitly an estimate, tied to media time.
     const words = [...text.matchAll(/\S+/gu)];
     const weights = words.map(w => Math.max(1, w[0].replace(/[^\p{L}\p{N}]/gu, '').length));
-    const total = weights.reduce((a,b) => a+b, 0);
+    const total = weights.reduce((a, b) => a + b, 0);
     const update = () => {
       if (state.isPaused || !Number.isFinite(audioEl.duration) || !audioEl.duration) return;
       let target = audioEl.currentTime / audioEl.duration * total, i = 0;
@@ -956,7 +1002,7 @@
       const nextIndex = state.currentIndex + 1;
       const seqId = state.sequenceId;
       // Audio is already trimmed server-side; only a short natural breath is needed.
-      const pauseMs = Math.max(20, Math.round(90 / (state.speed || 1.0)));
+      const pauseMs = Math.max(20, Math.round(70 / (state.speed || 1.0)));
       if (typeof setTimeout !== 'undefined') {
         if (typeof clearTimeout !== 'undefined' && state.sentenceTransitionTimer) {
           clearTimeout(state.sentenceTransitionTimer);
@@ -1009,10 +1055,14 @@
           <option value="af_sarah">🎙️ Sarah</option>
           <option value="am_michael">🎙️ Michael</option>
         </optgroup>
-        <optgroup label="Hebrew Voices">
-          <option value="he-roboshaul">🎙️ Shaul (RoboShaul)</option>
+        <optgroup label="Hebrew Voices (Edge Neural)">
           <option value="edge-he-avri">🌟 Avri</option>
           <option value="edge-he-hila">🌟 Hila</option>
+        </optgroup>
+        <optgroup label="ElevenLabs Multilingual">
+          <option value="eleven-rachel">💎 Rachel (ElevenLabs)</option>
+          <option value="eleven-adam">💎 Adam (ElevenLabs)</option>
+          <option value="eleven-charlie">💎 Charlie (ElevenLabs)</option>
         </optgroup>
       </select>
       <span class="guy-reader-clean-btn" id="guy-btn-clean" title="Toggle Clean Reader Mode">📖</span>
@@ -1031,7 +1081,7 @@
     mode.value = state.synchronized ? 'sync' : 'neural';
     mode.addEventListener('change', e => {
       state.synchronized = e.target.value === 'sync';
-      chrome.storage?.local.set({guy_reader_sync:state.synchronized});
+      chrome.storage?.local.set({ guy_reader_sync: state.synchronized });
       if (state.isPlaying || state.isPaused) playSentence(Math.max(0, state.currentIndex), false, state.wordOffset);
     });
     document.getElementById('guy-btn-play').addEventListener('click', () => {
@@ -1049,12 +1099,24 @@
     });
 
     document.getElementById('guy-voice-select').addEventListener('change', (e) => {
-      state.voice = e.target.value;
-      chrome.storage?.local.set({guy_reader_voice:state.voice});
-      if (state.voice.startsWith('edge-') && state.synchronized) {
+      const selected = e.target.value;
+      if (selected.startsWith('eleven-') && !state.elevenApiKey) {
+        const key = prompt('Enter your free ElevenLabs API Key (from elevenlabs.io):');
+        if (key && key.trim()) {
+          state.elevenApiKey = key.trim();
+          chrome.storage?.local.set({ guy_reader_eleven_key: state.elevenApiKey });
+        } else {
+          alert('ElevenLabs requires an API key. Reverting to previous voice.');
+          e.target.value = state.voice || 'edge-he-avri';
+          return;
+        }
+      }
+      state.voice = selected;
+      chrome.storage?.local.set({ guy_reader_voice: state.voice });
+      if ((state.voice.startsWith('edge-') || state.voice.startsWith('eleven-')) && state.synchronized) {
         state.synchronized = false;
         mode.value = 'neural';
-        chrome.storage?.local.set({guy_reader_sync:false});
+        chrome.storage?.local.set({ guy_reader_sync: false });
       }
       if (state.isPlaying || state.isPaused) {
         playSentence(state.currentIndex >= 0 ? state.currentIndex : 0);
@@ -1088,11 +1150,15 @@
   }
 
   function updatePillUI() {
-    const summary = JSON.stringify([state.isPlaying,state.isPaused,state.currentIndex,state.sentences.length]);
+    const summary = JSON.stringify([state.isPlaying, state.isPaused, state.currentIndex, state.sentences.length]);
     if (summary !== state.lastReportedState) {
       state.lastReportedState = summary;
-      try { chrome.runtime.sendMessage({action:'reader-state',playing:state.isPlaying,paused:state.isPaused,
-        index:state.currentIndex,total:state.sentences.length}, () => { void chrome.runtime.lastError; }); } catch (_) {}
+      try {
+        chrome.runtime.sendMessage({
+          action: 'reader-state', playing: state.isPlaying, paused: state.isPaused,
+          index: state.currentIndex, total: state.sentences.length
+        }, () => { void chrome.runtime.lastError; });
+      } catch (_) { }
     }
     const playIcon = document.getElementById('guy-icon-play');
     const pauseIcon = document.getElementById('guy-icon-pause');
@@ -1186,8 +1252,8 @@
       <div class="guy-reader-clean-content">
         <h1 class="guy-reader-clean-title">${document.title || 'Article'}</h1>
         ${textParagraphs.map(para =>
-          `<p class="guy-reader-clean-para">${para.join(' ')}</p>`
-        ).join('\n')}
+      `<p class="guy-reader-clean-para">${para.join(' ')}</p>`
+    ).join('\n')}
       </div>
     `;
 
@@ -1223,7 +1289,7 @@
   // 8. Message Router from Background or Popup
   chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     if (msg.expiresAt && Date.now() > msg.expiresAt) {
-      sendResponse({success:false, expired:true});
+      sendResponse({ success: false, expired: true });
       return false;
     }
     if (msg.voice && msg.voice !== state.voice) {
@@ -1233,9 +1299,9 @@
       if (voiceSelect) voiceSelect.value = state.voice;
     }
     if (msg.action === 'pause') {
-      pauseReading(); sendResponse({success:true});
+      pauseReading(); sendResponse({ success: true });
     } else if (msg.action === 'resume') {
-      resumeReading(); sendResponse({success:true});
+      resumeReading(); sendResponse({ success: true });
     } else if (msg.action === 'set-voice') {
       sendResponse({ success: true, voice: state.voice });
     } else if (msg.action === 'toggle-read') {

@@ -246,7 +246,52 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       });
     return true; // Keep channel open for async response
   }
+
+  if (message.action === 'synthesize-elevenlabs') {
+    synthesizeElevenLabs(message.text, message.voice, message.key)
+      .then((dataUrl) => {
+        sendResponse({ success: true, audioDataUrl: dataUrl });
+      })
+      .catch((err) => {
+        sendResponse({ success: false, error: err.message || 'ElevenLabs synthesis failed' });
+      });
+    return true; // Keep channel open for async response
+  }
 });
+
+const ELEVEN_VOICE_IDS = {
+  'eleven-rachel': '21m00Tcm4TlvDq8ikWAM',
+  'eleven-adam': 'pNInz6obpgDQGcFmaJgB',
+  'eleven-charlie': 'IKne3meq5aSn9XLyUdCD'
+};
+
+async function synthesizeElevenLabs(text, voiceChoice, apiKey) {
+  if (!apiKey) throw new Error('ElevenLabs API key is missing');
+  const voiceId = ELEVEN_VOICE_IDS[voiceChoice] || voiceChoice || '21m00Tcm4TlvDq8ikWAM';
+  const resp = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'xi-api-key': apiKey
+    },
+    body: JSON.stringify({
+      text: text,
+      model_id: 'eleven_multilingual_v2',
+      voice_settings: {
+        stability: 0.5,
+        similarity_boost: 0.8
+      }
+    }),
+    signal: AbortSignal.timeout(12000)
+  });
+  if (!resp.ok) {
+    const errText = await resp.text().catch(() => '');
+    throw new Error(`ElevenLabs error (HTTP ${resp.status}): ${errText}`);
+  }
+  const buffer = await resp.arrayBuffer();
+  const bytes = new Uint8Array(buffer);
+  return `data:audio/mp3;base64,${uint8ArrayToBase64(bytes)}`;
+}
 
 // Bridge to Local Desktop Companion Server (Port 5050)
 let bridgeSocket = null;

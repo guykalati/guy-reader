@@ -105,14 +105,14 @@
     if (!v) return false;
     const lower = v.toLowerCase();
     return lower.includes('-he-') ||
-           lower.includes('_he_') ||
-           lower.startsWith('he-') ||
-           lower.startsWith('he_') ||
-           lower.includes('hebrew') ||
-           lower.includes('avri') ||
-           lower.includes('hila') ||
-           lower.includes('roboshaul') ||
-           lower.includes('shaul');
+      lower.includes('_he_') ||
+      lower.startsWith('he-') ||
+      lower.startsWith('he_') ||
+      lower.includes('hebrew') ||
+      lower.includes('avri') ||
+      lower.includes('hila') ||
+      lower.includes('roboshaul') ||
+      lower.includes('shaul');
   }
 
   function formatSpeed(val) {
@@ -378,7 +378,7 @@
         const sentence = state.sentences[i];
         if (isHebrew(sentence) || (text.length && text.length + sentence.length > 2500)) break;
         if (text) text += ' ';
-        segments.push({index:i,start:text.length});
+        segments.push({ index: i, start: text.length });
         text += sentence;
       }
       state.connectedSegments = segments;
@@ -420,6 +420,7 @@
 
   function voiceForSentence(text) {
     const selected = state.voice;
+    if (selected && selected.startsWith('eleven-')) return selected;
     if (isHebrew(text)) return isHebrewVoice(selected) ? selected : state.voiceHe;
     if (state.language === 'he') {
       const enChars = (text.match(/[a-zA-Z]/g) || []).length;
@@ -554,6 +555,8 @@
       updateEqualizer(false);
     };
     if (voice.startsWith('apple-')) speakAppleVoice(sampleText, voice);
+    else if (voice.startsWith('eleven-')) speakElevenVoice(sampleText, voice);
+    else if (voice.startsWith('google-')) speakGoogleVoice(sampleText, voice);
     else await speakKokoroVoice(sampleText, voice, state.previewFinish);
   }
 
@@ -662,7 +665,7 @@
     if (state.currentIndex + 1 < state.sentences.length) {
       const nextIndex = state.currentIndex + 1;
       const playbackId = state.playbackId;
-      const pauseMs = Math.max(20, Math.round(90 / (state.speed || 1.0)));
+      const pauseMs = Math.max(20, Math.round(70 / (state.speed || 1.0)));
       if (state.sentenceTransitionTimer) clearTimeout(state.sentenceTransitionTimer);
       state.sentenceTransitionTimer = setTimeout(() => {
         state.sentenceTransitionTimer = null;
@@ -726,9 +729,9 @@
           if (typeof entry === 'string') {
             URL.revokeObjectURL(entry);
           } else if (entry && typeof entry.then === 'function') {
-            entry.then(url => { if (url) URL.revokeObjectURL(url); }).catch(() => {});
+            entry.then(url => { if (url) URL.revokeObjectURL(url); }).catch(() => { });
           }
-        } catch (e) {}
+        } catch (e) { }
       }
       state.prebufferCache.clear();
     }
@@ -898,7 +901,7 @@
     if (e.pointerId !== undefined && targetEl && targetEl.setPointerCapture) {
       try {
         targetEl.setPointerCapture(e.pointerId);
-      } catch (err) {}
+      } catch (err) { }
     }
 
     function onWindowDragMove(ev) {
@@ -922,7 +925,7 @@
       if (ev && ev.pointerId !== undefined && targetEl && targetEl.releasePointerCapture) {
         try {
           targetEl.releasePointerCapture(ev.pointerId);
-        } catch (err) {}
+        } catch (err) { }
       }
 
       window.removeEventListener('pointermove', onWindowDragMove);
