@@ -150,6 +150,50 @@ body.is-window-dragging .drag-zone {
   100% { height: 6px; }
 }
 
+/* First Button: Point & Read Anywhere on Screen */
+.btn-point-read {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 10px;
+  border-radius: 10px;
+  border: 1px solid rgba(191, 245, 73, 0.35);
+  background: rgba(191, 245, 73, 0.14);
+  color: var(--accent-lime);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: all 0.18s ease;
+  -webkit-app-region: no-drag;
+}
+
+.btn-point-read:hover {
+  background: rgba(191, 245, 73, 0.24);
+  border-color: var(--accent-lime);
+  box-shadow: 0 0 10px rgba(191, 245, 73, 0.28);
+}
+
+.btn-point-read.armed {
+  background: var(--accent-lime);
+  color: #0b0c0e;
+  border-color: var(--accent-lime);
+  box-shadow: 0 0 16px rgba(191, 245, 73, 0.65);
+  animation: pulse-point-read 1.1s infinite alternate ease-in-out;
+}
+
+@keyframes pulse-point-read {
+  0% { box-shadow: 0 0 8px rgba(191, 245, 73, 0.45); transform: scale(1); }
+  100% { box-shadow: 0 0 18px rgba(191, 245, 73, 0.85); transform: scale(1.03); }
+}
+
+.reader-current-word {
+  background: rgba(191, 245, 73, 0.28);
+  color: #ffffff;
+  border-radius: 4px;
+  padding: 0 2px;
+}
+
 /* Preview Zone */
 .preview-zone {
   display: flex;

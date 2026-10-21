@@ -29,6 +29,7 @@
     activeUrl: null,
     previewFinish: null,
     sentenceTransitionTimer: null,
+    pointToReadArmed: false,
     apiKeys: {
       eleven: localStorage.getItem('guy_reader_eleven_key') || localStorage.getItem('glaido_eleven_key') || '',
       google: localStorage.getItem('guy_reader_google_key') || localStorage.getItem('glaido_google_key') || ''
@@ -40,6 +41,8 @@
     container: document.getElementById('guyReaderContainer') || document.getElementById('glaidoContainer'),
     statusDot: document.getElementById('statusDot'),
     equalizer: document.getElementById('equalizer'),
+    btnPointRead: document.getElementById('btnPointRead'),
+    pointReadLabel: document.getElementById('pointReadLabel'),
     langTag: document.getElementById('langTag'),
     previewZone: document.getElementById('previewZone'),
     previewText: document.getElementById('previewText'),
@@ -133,12 +136,27 @@
     if (dom.settingsSpeedSlider) dom.settingsSpeedSlider.value = state.speed;
     if (dom.settingsSpeedVal) dom.settingsSpeedVal.textContent = formatted;
 
-    if (state.audioElement && !state.audioElement.paused) {
+    if (state.audioElement) {
+      state.audioElement.defaultPlaybackRate = state.speed;
       state.audioElement.playbackRate = state.speed;
     }
 
     localStorage.setItem('guy_reader_speed', state.speed);
     notifyNative('setSpeed', { speed: state.speed });
+  }
+
+  function setPointToReadState(armed) {
+    state.pointToReadArmed = !!armed;
+    if (dom.btnPointRead) {
+      if (state.pointToReadArmed) {
+        dom.btnPointRead.classList.add('armed');
+        if (dom.pointReadLabel) dom.pointReadLabel.textContent = 'Click Text...';
+        if (dom.previewText) dom.previewText.textContent = '🎯 Click any text on your screen to start reading...';
+      } else {
+        dom.btnPointRead.classList.remove('armed');
+        if (dom.pointReadLabel) dom.pointReadLabel.textContent = 'Click & Read';
+      }
+    }
   }
 
   function notifyNative(action, payload = {}) {
@@ -480,10 +498,35 @@
     audio.src = url;
     state.audioElement = audio;
     state.activeUrl = url;
+    audio.defaultPlaybackRate = state.speed;
     audio.playbackRate = state.speed;
+    audio.onloadedmetadata = () => {
+      audio.defaultPlaybackRate = state.speed;
+      audio.playbackRate = state.speed;
+    };
     audio.onplay = () => {
       if (playbackId !== state.playbackId || state.isPaused) { audio.pause(); return; }
+      audio.defaultPlaybackRate = state.speed;
+      audio.playbackRate = state.speed;
       if (typeof sentenceIndex === 'number') highlightSentence(sentenceIndex);
+    };
+    audio.ontimeupdate = () => {
+      if (playbackId !== state.playbackId || state.isPaused || typeof sentenceIndex !== 'number') return;
+      if (audio.duration > 0 && isFinite(audio.duration)) {
+        const sentence = state.sentences[sentenceIndex] || '';
+        const words = sentence.split(/(\s+)/);
+        const wordIndices = [];
+        words.forEach((tok, idx) => { if (tok.trim().length > 0) wordIndices.push(idx); });
+        if (wordIndices.length > 0) {
+          const progress = Math.min(0.999, Math.max(0, audio.currentTime / audio.duration));
+          const activeWordIdx = wordIndices[Math.floor(progress * wordIndices.length)];
+          const html = words.map((tok, idx) =>
+            idx === activeWordIdx ? `<mark class="reader-current-word">${escapeHtml(tok)}</mark>` : escapeHtml(tok)
+          ).join('');
+          const item = dom.sentencesList.querySelectorAll('.sentence-item')[sentenceIndex];
+          if (item) item.innerHTML = html;
+        }
+      }
     };
     audio.onended = () => {
       if (playbackId !== state.playbackId) return;
@@ -620,16 +663,12 @@
 
   // Engine 3: ElevenLabs Multilingual v2
   function speakElevenVoice(text, voiceChoice) {
-    state.backend = 'native';
     const key = state.apiKeys.eleven;
     if (!key) {
-      alert('ElevenLabs API key is missing. Please click ⚙ to enter your free ElevenLabs API key, or use Microsoft Edge Natural voices for free.');
-      const fb = isHebrew(text) ? 'edge-he-avri' : 'apple-evan';
-      dom.voiceSelect.value = fb;
-      state.voice = fb;
-      playSentence(state.currentIndex >= 0 ? state.currentIndex : 0);
+      speakKokoroVoice(text, voiceChoice, null, state.currentIndex);
       return;
     }
+    state.backend = 'native';
 
     const voiceIds = {
       'eleven-rachel': '21m00Tcm4TlvDq8ikWAM',
@@ -643,16 +682,13 @@
 
   // Engine 4: Google Cloud TTS
   function speakGoogleVoice(text, voiceChoice) {
-    state.backend = 'native';
     const key = state.apiKeys.google;
     if (!key) {
-      alert('Google Cloud TTS API key is missing. Please click ⚙ to add your key or use free Microsoft Edge Natural voices.');
-      const fb = isHebrew(text) ? 'edge-he-avri' : 'apple-evan';
-      dom.voiceSelect.value = fb;
-      state.voice = fb;
-      playSentence(state.currentIndex >= 0 ? state.currentIndex : 0);
+      const fb = isHebrew(text) ? 'edge-he-avri' : 'af_sarah';
+      speakKokoroVoice(text, fb, null, state.currentIndex);
       return;
     }
+    state.backend = 'native';
     notifyNative('googleTTS', { requestId: state.playbackId, text, voice: voiceChoice, key, rate: state.speed });
   }
 
@@ -665,7 +701,10 @@
     if (state.currentIndex + 1 < state.sentences.length) {
       const nextIndex = state.currentIndex + 1;
       const playbackId = state.playbackId;
-      const pauseMs = Math.max(20, Math.round(70 / (state.speed || 1.0)));
+      const finishedText = (state.sentences[state.currentIndex] || '').trim();
+      const isBulletOrHeadingClause = finishedText.length > 0 && !/[.!?…׃'"”’)\]}]$/u.test(finishedText);
+      const basePauseMs = isBulletOrHeadingClause ? 260 : 85;
+      const pauseMs = Math.max(25, Math.round(basePauseMs / Math.max(0.6, state.speed || 1.0)));
       if (state.sentenceTransitionTimer) clearTimeout(state.sentenceTransitionTimer);
       state.sentenceTransitionTimer = setTimeout(() => {
         state.sentenceTransitionTimer = null;
@@ -962,6 +1001,15 @@
     drawerHeader.addEventListener('mousedown', onWindowDragStart);
   }
 
+  if (dom.btnPointRead) {
+    dom.btnPointRead.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const nextArmed = !state.pointToReadArmed;
+      if (nextArmed) stopSpeech();
+      setPointToReadState(nextArmed);
+      notifyNative('togglePointToRead', { armed: nextArmed });
+    });
+  }
   dom.btnReadSelection.addEventListener('click', triggerReadSelection);
   if (dom.btnPillPaste) {
     dom.btnPillPaste.addEventListener('click', () => {
@@ -1256,6 +1304,9 @@
     },
     setSpeedValue: (val) => {
       setSpeed(val);
+    },
+    setPointToReadArmed: (armed) => {
+      setPointToReadState(armed);
     },
     showHint: (msg) => {
       dom.previewText.textContent = msg;

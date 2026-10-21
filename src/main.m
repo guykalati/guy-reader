@@ -31,7 +31,10 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic, strong, nullable) NSTimer *browserStateTimer;
 @property (nonatomic, assign) NSUInteger browserSession;
 @property (nonatomic, assign) BOOL hasStoppedEngine;
+@property (nonatomic, assign) BOOL pointToReadArmed;
 - (void)readSelectionFromActiveApp;
+- (void)armPointToRead:(BOOL)armed;
+- (void)readFromClickedPointInApp:(NSRunningApplication *)targetApp point:(CGPoint)point;
 - (void)notifyNoTextCaptured;
 - (void)ensureSpeechEngineDaemonRunning;
 - (void)stopSpeechEngineDaemon;
@@ -42,9 +45,36 @@ static AppDelegate *g_appDelegate = nil;
 
 static NSString *const kSmartExtractJS =
 @"(function() {"
-"  var sel = window.getSelection ? window.getSelection().toString() : '';"
+"  var selObj = window.getSelection ? window.getSelection() : null;"
+"  var sel = selObj ? selObj.toString() : '';"
 "  if (sel && sel.trim().length > 0) {"
 "    return '__GUY_READER_EXACT_SEL__' + sel.trim();"
+"  }"
+"  if (selObj && selObj.anchorNode) {"
+"    var node = selObj.anchorNode;"
+"    var el = (node.nodeType === 1) ? node : node.parentElement;"
+"    var block = el && el.closest ? el.closest('p, li, h1, h2, h3, h4, blockquote, [data-testid=\"tweetText\"]') : null;"
+"    if (block) {"
+"      var root = block.closest('article, [role=\"main\"], main, .article-body, .post-content, .entry-content, #content, .story-body') || document.body;"
+"      var allBlocks = Array.prototype.slice.call(root.querySelectorAll('p, h1, h2, h3, h4, blockquote, li, [data-testid=\"tweetText\"]'));"
+"      var startIdx = allBlocks.indexOf(block);"
+"      if (startIdx !== -1) {"
+"        var out = [];"
+"        for (var bi = startIdx; bi < allBlocks.length; bi++) {"
+"          var bt = allBlocks[bi].innerText ? allBlocks[bi].innerText.trim() : '';"
+"          if (bi === startIdx && node.nodeType === 3 && selObj.anchorOffset > 0 && node.nodeValue) {"
+"            var sub = node.nodeValue.substring(selObj.anchorOffset).trim();"
+"            var pos = bt.indexOf(sub);"
+"            if (pos > 0) {"
+"              while (pos > 0 && !/\\s/.test(bt.charAt(pos - 1))) pos--;"
+"              bt = bt.substring(pos).trim();"
+"            }"
+"          }"
+"          if (bt.length > 2 && /[\\p{L}\\p{N}]/u.test(bt)) out.push(bt);"
+"        }"
+"        if (out.length > 0) return '__GUY_READER_EXACT_SEL__' + out.join('\\n\\n');"
+"      }"
+"    }"
 "  }"
 "  var host = window.location.hostname || '';"
 "  if (host.indexOf('twitter.com') !== -1 || host.indexOf('x.com') !== -1) {"
@@ -156,7 +186,8 @@ static NSString *const kSmartExtractJS =
         }
     }
 
-    // Mouse-only observer: remember source text before clicking our floating controls.
+    // Mouse-only observer: remember source text before clicking our floating controls,
+    // and immediately trigger reading if "Click & Read" (pointToReadArmed) is active.
     __weak typeof(self) weakSelf = self;
     self.sourceClickMonitor = [NSEvent addGlobalMonitorForEventsMatchingMask:NSEventMaskLeftMouseUp handler:^(NSEvent *event) {
         __strong typeof(weakSelf) strongSelf = weakSelf;
@@ -171,6 +202,13 @@ static NSString *const kSmartExtractJS =
         CGPoint point = CGPointMake(mouse.x, top - mouse.y);
         strongSelf.clickedPoint = point;
         strongSelf.hasClickedPoint = YES;
+        BOOL wasArmed = strongSelf.pointToReadArmed;
+        if (wasArmed) {
+            strongSelf.pointToReadArmed = NO;
+            dispatch_async(dispatch_get_main_queue(), ^{
+                [strongSelf.webView evaluateJavaScript:@"window.guyReaderApp && window.guyReaderApp.setPointToReadArmed && window.guyReaderApp.setPointToReadArmed(false);" completionHandler:nil];
+            });
+        }
 
         // Wake up accessibility tree on target process (crucial for Electron and Chromium apps)
         AXUIElementRef frontAppElem = AXUIElementCreateApplication(front.processIdentifier);
@@ -203,6 +241,24 @@ static NSString *const kSmartExtractJS =
             CFRelease(hit);
         }
         CFRelease(system);
+
+        // Follow-up at +120ms after AXManualAccessibility wakes up & caret settles
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.12 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            __strong typeof(weakSelf) sSelf = weakSelf;
+            if (!sSelf) return;
+            if (!sSelf.clickedReadingText.length && sSelf.clickedAppPID == front.processIdentifier) {
+                AXUIElementRef sys2 = AXUIElementCreateSystemWide(), hit2 = NULL;
+                if (AXUIElementCopyElementAtPosition(sys2, point.x, point.y, &hit2) == kAXErrorSuccess && hit2) {
+                    NSString *txt2 = GRReadingTextAtElement(hit2, point);
+                    if (txt2.length) sSelf.clickedReadingText = txt2;
+                    CFRelease(hit2);
+                }
+                CFRelease(sys2);
+            }
+            if (wasArmed) {
+                [sSelf readFromClickedPointInApp:front point:point];
+            }
+        });
     }];
 
     [self setupMenuBarItem];
@@ -494,6 +550,72 @@ static NSString *const kSmartExtractJS =
 
 #pragma mark - On-Screen Button Actions
 
+- (void)armPointToRead:(BOOL)armed {
+    self.pointToReadArmed = armed;
+    if (armed) {
+        self.captureRevision++;
+        if (self.browserReading) [self triggerBrowserAction:@"stop" completion:nil];
+        self.browserReading = NO;
+        [self.speechEngine stop];
+    }
+    NSString *js = [NSString stringWithFormat:@"window.guyReaderApp && window.guyReaderApp.setPointToReadArmed && window.guyReaderApp.setPointToReadArmed(%@);", armed ? @"true" : @"false"];
+    [self.webView evaluateJavaScript:js completionHandler:nil];
+}
+
+- (void)readFromClickedPointInApp:(NSRunningApplication *)targetApp point:(CGPoint)point {
+    if (!targetApp) return;
+    self.captureRevision++;
+
+    NSString *selection = [self getSelectedTextViaAccessibility:targetApp.processIdentifier];
+    if (selection && [selection stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]].length > 0) {
+        [self deliverTextToReader:selection];
+        return;
+    }
+
+    if (self.clickedReadingText.length > 0 && self.clickedAppPID == targetApp.processIdentifier) {
+        [self deliverTextToReader:self.clickedReadingText];
+        return;
+    }
+
+    AXUIElementRef system = AXUIElementCreateSystemWide(), hit = NULL;
+    if (AXUIElementCopyElementAtPosition(system, point.x, point.y, &hit) == kAXErrorSuccess && hit) {
+        NSString *txt = GRReadingTextAtElement(hit, point);
+        CFRelease(hit);
+        if (txt.length > 0) {
+            CFRelease(system);
+            self.clickedReadingText = txt;
+            [self deliverTextToReader:txt];
+            return;
+        }
+    }
+    CFRelease(system);
+
+    AXUIElementRef appElement = AXUIElementCreateApplication(targetApp.processIdentifier);
+    if (appElement) {
+        CFTypeRef focused = NULL;
+        if (AXUIElementCopyAttributeValue(appElement, kAXFocusedUIElementAttribute, &focused) == kAXErrorSuccess && focused) {
+            NSString *remaining = GRReadingTextAtElement((AXUIElementRef)focused, point);
+            CFRelease(focused);
+            if (remaining.length > 0) {
+                CFRelease(appElement);
+                [self deliverTextToReader:remaining];
+                return;
+            }
+        }
+        CFRelease(appElement);
+    }
+
+    NSString *bundle = targetApp.bundleIdentifier.lowercaseString ?: @"";
+    BOOL isBrowserApp = [bundle containsString:@"safari"] || [bundle containsString:@"chrome"] ||
+                        [bundle containsString:@"brave"] || [bundle containsString:@"edge"] ||
+                        [bundle containsString:@"arc"] || [bundle containsString:@"vivaldi"];
+    if (isBrowserApp) {
+        [self extractForegroundContentFromApp:targetApp];
+    } else {
+        [self captureDesktopAppText:targetApp];
+    }
+}
+
 - (void)readSelectionFromActiveApp {
     static NSTimeInterval lastTriggerTime = 0;
     NSTimeInterval now = [NSDate timeIntervalSinceReferenceDate];
@@ -533,6 +655,45 @@ static NSString *const kSmartExtractJS =
         return NO;
     };
 
+    // An explicit highlight or a remembered click in any app (including browsers)
+    // is read directly in Guy_reader.app (unified 1-app reader).
+    NSString *selection = targetApp ? [self getSelectedTextViaAccessibility:targetApp.processIdentifier] : nil;
+    NSString *origin = GRPreferredReadingText(selection, self.clickedReadingText,
+        targetApp && belongsToTarget(self.clickedAppPID, targetApp));
+    if (origin.length) {
+        [self deliverTextToReader:origin];
+        return;
+    }
+
+    // If user has NOT clicked a new spot outside the app since reading started,
+    // and text is already loaded or speech is active/paused, toggle playback rather than scraping.
+    if (!self.hasClickedPoint && (self.readerIsActive || [self.speechEngine isSpeaking] || self.speechEngine.isPaused || self.currentReadingText.length > 0)) {
+        [self.webView evaluateJavaScript:@"var app = window.guyReaderApp || window.glaidoApp; app && app.togglePlayPause();" completionHandler:nil];
+        return;
+    }
+
+    // If clickedReadingText wasn't available at the instant of mouse-up (e.g. Electron/Chrome tree was still waking up),
+    // perform hit-testing now at the remembered clickedPoint in targetApp:
+    if (self.hasClickedPoint && targetApp && belongsToTarget(self.clickedAppPID, targetApp)) {
+        AXUIElementRef appElem = AXUIElementCreateApplication(targetApp.processIdentifier);
+        if (appElem) {
+            AXUIElementSetAttributeValue(appElem, (CFStringRef)@"AXManualAccessibility", kCFBooleanTrue);
+            CFRelease(appElem);
+        }
+        AXUIElementRef system = AXUIElementCreateSystemWide(), hit = NULL;
+        if (AXUIElementCopyElementAtPosition(system, self.clickedPoint.x, self.clickedPoint.y, &hit) == kAXErrorSuccess && hit) {
+            NSString *txt = GRReadingTextAtElement(hit, self.clickedPoint);
+            CFRelease(hit);
+            if (txt.length) {
+                CFRelease(system);
+                self.clickedReadingText = txt;
+                [self deliverTextToReader:txt];
+                return;
+            }
+        }
+        CFRelease(system);
+    }
+
     NSString *bundle = targetApp.bundleIdentifier.lowercaseString ?: @"";
     BOOL browser = [bundle containsString:@"chrome"] || [bundle containsString:@"brave"] ||
         [bundle containsString:@"edge"] || [bundle containsString:@"arc"] || [bundle containsString:@"vivaldi"];
@@ -554,51 +715,10 @@ static NSString *const kSmartExtractJS =
             } else if (self.clickedReadingText.length && targetApp && belongsToTarget(self.clickedAppPID, targetApp)) {
                 [self deliverTextToReader:self.clickedReadingText];
             } else {
-                [self captureDesktopAppText:targetApp];
+                [self extractForegroundContentFromApp:targetApp];
             }
         }];
         return;
-    }
-    // An explicit highlight is the strongest reading origin. Check it before
-    // the remembered click, because mouse-up at the end of a selection also
-    // updates the click observer.
-    NSString *selection = targetApp ? [self getSelectedTextViaAccessibility:targetApp.processIdentifier] : nil;
-    NSString *origin = GRPreferredReadingText(selection, self.clickedReadingText,
-        targetApp && belongsToTarget(self.clickedAppPID, targetApp));
-    if (origin.length) {
-        [self deliverTextToReader:origin];
-        return;
-    }
-
-    // The webview owns both local audio and native transport state.
-    // If text is already loaded or speech is currently active/paused, toggle playback rather than scraping.
-    if (self.readerIsActive || [self.speechEngine isSpeaking] || self.speechEngine.isPaused || self.currentReadingText.length > 0) {
-        [self.webView evaluateJavaScript:@"var app = window.guyReaderApp || window.glaidoApp; app && app.togglePlayPause();" completionHandler:nil];
-        return;
-    }
-
-    // If clickedReadingText wasn't available at the instant of mouse-up (e.g. Electron tree was still waking up),
-    // perform hit-testing now at the remembered clickedPoint in targetApp:
-    if (self.hasClickedPoint && targetApp && belongsToTarget(self.clickedAppPID, targetApp)) {
-        if (targetApp) {
-            AXUIElementRef appElem = AXUIElementCreateApplication(targetApp.processIdentifier);
-            if (appElem) {
-                AXUIElementSetAttributeValue(appElem, (CFStringRef)@"AXManualAccessibility", kCFBooleanTrue);
-                CFRelease(appElem);
-            }
-        }
-        AXUIElementRef system = AXUIElementCreateSystemWide(), hit = NULL;
-        if (AXUIElementCopyElementAtPosition(system, self.clickedPoint.x, self.clickedPoint.y, &hit) == kAXErrorSuccess && hit) {
-            NSString *txt = GRReadingTextAtElement(hit, self.clickedPoint);
-            CFRelease(hit);
-            if (txt.length) {
-                CFRelease(system);
-                self.clickedReadingText = txt;
-                [self deliverTextToReader:txt];
-                return;
-            }
-        }
-        CFRelease(system);
     }
 
     if (targetApp) {
@@ -1187,6 +1307,9 @@ static NSString *const kSmartExtractJS =
     self.browserReading = NO;
     [self.speechEngine stop];
     self.speechRequestId = 0;
+    self.hasClickedPoint = NO;
+    self.clickedReadingText = nil;
+    self.pointToReadArmed = NO;
     self.currentReadingText = clean;
     self.readingClipboardChangeCount = [NSPasteboard generalPasteboard].changeCount;
 
@@ -1230,6 +1353,9 @@ static NSString *const kSmartExtractJS =
 
     if ([action isEqualToString:@"readSelection"] || [action isEqualToString:@"playButtonClicked"]) {
         [self readSelectionFromActiveApp];
+    } else if ([action isEqualToString:@"togglePointToRead"] || [action isEqualToString:@"armPointToRead"]) {
+        BOOL nextArmed = (body[@"armed"] != nil) ? [body[@"armed"] boolValue] : !self.pointToReadArmed;
+        [self armPointToRead:nextArmed];
     } else if ([action isEqualToString:@"playbackState"]) {
         self.readerIsActive = [body[@"active"] boolValue];
     } else if ([action isEqualToString:@"textLoaded"]) {

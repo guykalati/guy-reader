@@ -31,10 +31,16 @@
         </div>
       </div>
 
+      <!-- First Button: Point & Read Anywhere on Screen -->
+      <button class="btn-point-read" id="btnPointRead" title="Click here, then click anywhere on screen to start reading">
+        <span class="point-icon">🎯</span>
+        <span class="point-label" id="pointReadLabel">Click &amp; Read</span>
+      </button>
+
       <!-- Quick Text Preview / Status -->
       <div class="preview-zone" id="previewZone" title="Click to expand text drawer">
         <span class="lang-tag" id="langTag">EN</span>
-        <span class="preview-text" id="previewText">Ready. Click Read or ▶ to start</span>
+        <span class="preview-text" id="previewText">Click 🎯 then click any text on screen</span>
       </div>
 
       <!-- Playback Controls -->
@@ -110,27 +116,19 @@
         <div class="drawer-voice-selector">
           <label for="voiceSelect">Voice:</label>
           <select id="voiceSelect" class="voice-dropdown">
-            <optgroup label="Kokoro-82M Neural (Local & Offline)">
-              <option value="af_sarah" selected>🧠 Sarah (American Female - Kokoro)</option>
-              <option value="am_michael">🧠 Michael (American Male - Kokoro)</option>
+            <optgroup label="Kokoro-82M Neural (Local &amp; Fast)">
+              <option value="af_sarah" selected>🧠 Sarah (English Female - Kokoro)</option>
+              <option value="am_michael">🧠 Michael (English Male - Kokoro)</option>
             </optgroup>
-            <optgroup label="Hebrew Voices (Edge Neural & ElevenLabs)">
+            <optgroup label="Hebrew Neural Voices">
               <option value="edge-he-avri">🌟 Avri (Hebrew Male - Neural)</option>
               <option value="edge-he-hila">🌟 Hila (Hebrew Female - Neural)</option>
             </optgroup>
-            <optgroup label="macOS Native Offline">
-              <option value="apple-evan">🍏 Evan (Enhanced) (Apple US)</option>
+            <optgroup label="English Edge Neural Voices">
+              <option value="edge-en-jenny">🌟 Jenny (English Female - Neural)</option>
+              <option value="edge-en-guy">🌟 Guy (English Male - Neural)</option>
             </optgroup>
-            <optgroup label="Edge AI Online">
-              <option value="edge-en-jenny">🌟 Jenny (English US - Edge AI)</option>
-              <option value="edge-en-guy">🌟 Guy (English US - Edge AI)</option>
-            </optgroup>
-            <optgroup label="Google Cloud AI">
-              <option value="google-en-neural2">🌐 Google English Neural2</option>
-              <option value="google-he-neural2">🌐 Google Hebrew Neural2</option>
-              <option value="google-he-wavenet">🌐 Google Hebrew Wavenet</option>
-            </optgroup>
-            <optgroup label="ElevenLabs Multilingual">
+            <optgroup label="ElevenLabs Multilingual v2">
               <option value="eleven-rachel">💎 Rachel (ElevenLabs Multilingual)</option>
               <option value="eleven-adam">💎 Adam (ElevenLabs Multilingual)</option>
               <option value="eleven-charlie">💎 Charlie (ElevenLabs Multilingual)</option>
@@ -187,19 +185,17 @@
           <button class="btn-icon btn-close-modal" id="btnCloseSettings" title="Close Settings">✕</button>
         </div>
         <div class="modal-body">
-          <label class="form-group"><input type="checkbox" id="synchronizedMode"> Follow words with Evan (offline English only)</label>
-          <p class="settings-help">Unchecked by default to use your selected neural voices (Kokoro & Edge). Checked: uses offline Apple Evan for synchronized word ranges.</p>
+          <label class="form-group" style="display:none;"><input type="checkbox" id="synchronizedMode"> Follow words with Evan (offline English only)</label>
           <!-- Default English Voice -->
           <div class="form-group">
-            <label for="settingsVoiceEn">Default English Voice (Kokoro-82M Local):</label>
+            <label for="settingsVoiceEn">Default English Voice (Neural):</label>
             <div class="voice-preview-row">
               <select id="settingsVoiceEn" class="voice-dropdown settings-dropdown">
-                <option value="af_sarah" selected>🧠 Sarah (American Female - Kokoro)</option>
-                <option value="am_michael">🧠 Michael (American Male - Kokoro)</option>
-                <option value="apple-evan">🍏 Evan (Enhanced - Apple Native)</option>
-                <option value="edge-en-jenny">🌟 Jenny (Female - Edge AI)</option>
-                <option value="edge-en-guy">🌟 Guy (Male - Edge AI)</option>
-                <optgroup label="ElevenLabs Multilingual">
+                <option value="af_sarah" selected>🧠 Sarah (English Female - Kokoro)</option>
+                <option value="am_michael">🧠 Michael (English Male - Kokoro)</option>
+                <option value="edge-en-jenny">🌟 Jenny (English Female - Neural)</option>
+                <option value="edge-en-guy">🌟 Guy (English Male - Neural)</option>
+                <optgroup label="ElevenLabs Multilingual v2">
                   <option value="eleven-rachel">💎 Rachel (ElevenLabs Multilingual)</option>
                   <option value="eleven-adam">💎 Adam (ElevenLabs Multilingual)</option>
                   <option value="eleven-charlie">💎 Charlie (ElevenLabs Multilingual)</option>

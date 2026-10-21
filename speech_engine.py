@@ -119,6 +119,42 @@ def expand_hebrew_abbreviations(text: str) -> str:
     return expanded
 
 
+def prepare_text_for_tts(text: str, lang: str) -> str:
+    """Normalize punctuation, spaced dashes, bullets, and abbreviations for natural TTS prosody."""
+    if not text:
+        return text
+    out = text.strip()
+    if lang == "he":
+        out = expand_hebrew_abbreviations(out)
+    # Normalize spaced dashes (e.g. "צירי סחר - בארץ מדשדשים" or "word - word") into a comma pause
+    # so neural voices take a natural breath instead of rushing through hyphens.
+    out = re.sub(r"\s+[-–—]+\s+", ", ", out)
+    # Strip any residual bullet characters
+    out = re.sub(r"[•▪▫◆◇✦]+", ", ", out).strip(" ,")
+    # Ensure clause has terminal punctuation so bullet-split clauses get natural falling intonation
+    if out and not re.search(r"[.!?׃:;][\"'”’\)\]]*$", out):
+        out = out + "."
+    return out
+
+
+def trim_audio_bytes(audio_bytes: bytes, threshold: float = 0.012, pad_ms: int = 25) -> tuple[bytes, int, float] | None:
+    """Decode encoded audio (MP3/WAV), trim leading/trailing dead air, and return clean WAV bytes."""
+    try:
+        samples, sample_rate = sf.read(io.BytesIO(audio_bytes), dtype="float32")
+        if samples.ndim > 1:
+            samples = np.mean(samples, axis=1)
+        if samples.size == 0:
+            return None
+        trimmed = trim_silence(np.asarray(samples, dtype=np.float32), sample_rate, threshold=threshold, pad_ms=pad_ms)
+        buf = io.BytesIO()
+        sf.write(buf, trimmed, sample_rate, format="WAV")
+        wav_bytes = buf.getvalue()
+        duration = float(len(trimmed)) / float(sample_rate)
+        return wav_bytes, sample_rate, duration
+    except Exception:
+        return None
+
+
 def split_sentences(raw_text: str) -> list[str]:
     """Split raw text into clean sentences without breaking on decimals, URLs, dates, or abbreviations."""
     if not raw_text:
@@ -259,6 +295,7 @@ class SpeechEngine:
         self._init_kokoro()
         self._roboshaul = None
         self._roboshaul_cache = {}
+        self._audio_cache = {}
         self._init_roboshaul()
 
     def _init_kokoro(self):
@@ -316,7 +353,23 @@ class SpeechEngine:
     ) -> SynthesisResult:
         """Synthesize a single sentence to audio."""
         lang = detect_language(text)
+        cache_key = (text.strip(), voice or "", round(float(speed), 2))
+        if cache_key in self._audio_cache:
+            return self._audio_cache[cache_key]
 
+        result = self._synthesize_sentence_uncached(text, voice, speed, lang)
+        if len(self._audio_cache) >= 96:
+            self._audio_cache.pop(next(iter(self._audio_cache)))
+        self._audio_cache[cache_key] = result
+        return result
+
+    def _synthesize_sentence_uncached(
+        self,
+        text: str,
+        voice: str | None,
+        speed: float,
+        lang: str,
+    ) -> SynthesisResult:
         # Robo-Shaul Hebrew voice
         if voice in ("he-roboshaul", "roboshaul") or (lang == "he" and voice and "shaul" in voice.lower()):
             if self._roboshaul:
@@ -337,13 +390,18 @@ class SpeechEngine:
 
         if lang == "en" and self._kokoro:
             kokoro_voice = voice if voice and voice.startswith(("af_", "am_", "bf_", "bm_")) else "af_sarah"
+            # Calibrate Kokoro base rate: am_michael at 1.0x is naturally a bit brisk,
+            # so 0.88x makes 1.0x sound relaxed and natural; af_sarah at 0.94x is optimal.
+            voice_speed_factor = 0.88 if kokoro_voice == "am_michael" else 0.94
+            effective_speed = max(0.5, min(2.5, float(speed) * voice_speed_factor))
+            clean_text = prepare_text_for_tts(text, "en")
             samples, sample_rate = self._kokoro.create(
-                text,
+                clean_text,
                 voice=kokoro_voice,
-                speed=float(speed),
+                speed=effective_speed,
                 lang="en-us",
             )
-            samples = trim_silence(np.asarray(samples, dtype=np.float32), sample_rate)
+            samples = trim_silence(np.asarray(samples, dtype=np.float32), sample_rate, threshold=0.01, pad_ms=25)
             # Write WAV bytes in-memory
             buf = io.BytesIO()
             sf.write(buf, samples, sample_rate, format="WAV")
@@ -400,13 +458,14 @@ class SpeechEngine:
         # Calculate rate string e.g. "+10%", "-20%"
         rate_val = int(round((speed - 1.0) * 100))
         rate_str = f"{rate_val:+d}%" if rate_val != 0 else "+0%"
+        clean_text = prepare_text_for_tts(text, result_lang)
 
         try:
             import asyncio
             import edge_tts
 
             async def _run_edge():
-                communicate = edge_tts.Communicate(text, edge_voice, rate=rate_str)
+                communicate = edge_tts.Communicate(clean_text, edge_voice, rate=rate_str)
                 chunks = []
                 async for chunk in communicate.stream():
                     if chunk["type"] == "audio":
@@ -426,6 +485,15 @@ class SpeechEngine:
                 audio_data = asyncio.run(asyncio.wait_for(_run_edge(), timeout=10.0))
 
             if audio_data and len(audio_data) > 0:
+                trimmed = trim_audio_bytes(audio_data, threshold=0.012, pad_ms=25)
+                if trimmed is not None:
+                    trimmed_bytes, sr, dur = trimmed
+                    return SynthesisResult(
+                        audio_bytes=trimmed_bytes,
+                        sample_rate=sr,
+                        duration_seconds=dur,
+                        language=result_lang,
+                    )
                 return SynthesisResult(
                     audio_bytes=audio_data,
                     sample_rate=24000,
@@ -456,9 +524,10 @@ class SpeechEngine:
             "eleven-charlie": "IKne3meq5aSn9XLyUdCD",
         }
         voice_id = voice_ids.get(voice, "21m00Tcm4TlvDq8ikWAM")
+        clean_text = prepare_text_for_tts(text, lang)
         url = f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}"
         payload = json.dumps({
-            "text": text,
+            "text": clean_text,
             "model_id": "eleven_multilingual_v2",
             "voice_settings": {"stability": 0.5, "similarity_boost": 0.75}
         }).encode("utf-8")
@@ -474,6 +543,15 @@ class SpeechEngine:
         try:
             with urllib.request.urlopen(req, timeout=10) as resp:
                 audio_bytes = resp.read()
+                trimmed = trim_audio_bytes(audio_bytes, threshold=0.012, pad_ms=25)
+                if trimmed is not None:
+                    trimmed_bytes, sr, dur = trimmed
+                    return SynthesisResult(
+                        audio_bytes=trimmed_bytes,
+                        sample_rate=sr,
+                        duration_seconds=dur,
+                        language=lang,
+                    )
                 duration = max(0.5, len(text) * 0.08 / max(0.5, speed))
                 return SynthesisResult(
                     audio_bytes=audio_bytes,

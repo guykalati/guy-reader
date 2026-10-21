@@ -34,10 +34,13 @@
     elevenApiKey: '',
   };
 
-  chrome.storage?.local.get({ guy_reader_sync: false, guy_reader_voice: 'af_sarah', guy_reader_eleven_key: '' }, prefs => {
+  chrome.storage?.local.get({ guy_reader_sync: false, guy_reader_voice: 'af_sarah', guy_reader_eleven_key: '', guy_reader_speed: 1.0 }, prefs => {
     state.synchronized = prefs.guy_reader_sync;
     state.voice = prefs.guy_reader_voice;
     state.elevenApiKey = prefs.guy_reader_eleven_key || '';
+    if (typeof prefs.guy_reader_speed === 'number' && !isNaN(prefs.guy_reader_speed)) {
+      state.speed = Math.max(0.5, Math.min(2.5, Math.round(prefs.guy_reader_speed * 10) / 10));
+    }
   });
 
   // 1. Sentence Splitting Helper
@@ -660,9 +663,20 @@
       return;
     }
 
-    // Fallback: Edge TTS via background.js
+    // Fallback: Edge TTS via background.js (use prefetched audio if already in flight/cached!)
     if (voice.startsWith('edge-') || isHebrew(textToSpeak)) {
       const edgeVoice = isHebrew(textToSpeak) ? (voice.startsWith('edge-') ? voice : 'edge-he-avri') : (voice.startsWith('edge-') ? voice : 'edge-en-jenny');
+      const prefetchKey = `${index}:${offset}:${edgeVoice}`;
+      if (state.prefetch.has(prefetchKey)) {
+        const prefetchedUrl = await state.prefetch.get(prefetchKey);
+        if (state.sequenceId !== mySeq) return;
+        if (prefetchedUrl) {
+          playAudioUrl(prefetchedUrl, textToSpeak, mySeq, false, offset);
+          prefetchSentence(index + 1);
+          prefetchSentence(index + 2);
+          return;
+        }
+      }
       chrome.runtime.sendMessage({
         action: 'synthesize-edge-tts',
         text: textToSpeak,
@@ -673,6 +687,7 @@
         if (resp && resp.success && resp.audioDataUrl) {
           playAudioUrl(resp.audioDataUrl, textToSpeak, mySeq, false, offset);
           prefetchSentence(index + 1);
+          prefetchSentence(index + 2);
         } else if (state.engineAvailable) {
           chrome.runtime.sendMessage({
             action: 'synthesize-local',
@@ -874,7 +889,12 @@
 
     const audio = new Audio(playableUrl);
     state.audioElement = audio;
+    audio.defaultPlaybackRate = state.speed;
     audio.playbackRate = state.speed;
+    audio.onloadedmetadata = () => {
+      audio.defaultPlaybackRate = state.speed;
+      audio.playbackRate = state.speed;
+    };
 
     audio.onplay = () => {
       if (state.sequenceId !== seqId || state.isPaused) {
@@ -882,6 +902,8 @@
         cleanup();
         return;
       }
+      audio.defaultPlaybackRate = state.speed;
+      audio.playbackRate = state.speed;
       startWordTimer(text, audio, offset);
       updatePillUI();
     };
@@ -1001,8 +1023,10 @@
     if (state.currentIndex + 1 < state.sentences.length) {
       const nextIndex = state.currentIndex + 1;
       const seqId = state.sequenceId;
-      // Audio is already trimmed server-side; only a short natural breath is needed.
-      const pauseMs = Math.max(20, Math.round(70 / (state.speed || 1.0)));
+      const finishedText = (state.sentences[state.currentIndex]?.text || '').trim();
+      const isBulletOrHeadingClause = finishedText.length > 0 && !/[.!?…׃'"”’)\]}]$/u.test(finishedText);
+      const basePauseMs = isBulletOrHeadingClause ? 250 : 65;
+      const pauseMs = Math.max(20, Math.round(basePauseMs / Math.max(0.6, state.speed || 1.0)));
       if (typeof setTimeout !== 'undefined') {
         if (typeof clearTimeout !== 'undefined' && state.sentenceTransitionTimer) {
           clearTimeout(state.sentenceTransitionTimer);
@@ -1043,23 +1067,27 @@
       <span class="guy-reader-counter" id="guy-counter">[0/0]</span>
       <div class="guy-reader-speed-group">
         <button class="guy-reader-speed-btn" id="guy-speed-down">−</button>
-        <span class="guy-reader-speed-val" id="guy-speed-val">1.0x</span>
+        <span class="guy-reader-speed-val" id="guy-speed-val">${state.speed.toFixed(1)}x</span>
         <button class="guy-reader-speed-btn" id="guy-speed-up">+</button>
       </div>
-      <select class="guy-reader-voice-select" id="guy-mode-select" title="Word highlighting mode">
+      <select class="guy-reader-voice-select" id="guy-mode-select" title="Word highlighting mode" style="display:none;">
         <option value="sync">Follow words · Evan (English)</option>
         <option value="neural">Neural · estimated words</option>
       </select>
       <select class="guy-reader-voice-select" id="guy-voice-select" title="Voice">
-        <optgroup label="English (Local Kokoro)">
-          <option value="af_sarah">🎙️ Sarah</option>
-          <option value="am_michael">🎙️ Michael</option>
+        <optgroup label="English Neural (Kokoro)">
+          <option value="af_sarah">🧠 Sarah</option>
+          <option value="am_michael">🧠 Michael</option>
         </optgroup>
-        <optgroup label="Hebrew Voices (Edge Neural)">
+        <optgroup label="Hebrew Neural Voices">
           <option value="edge-he-avri">🌟 Avri</option>
           <option value="edge-he-hila">🌟 Hila</option>
         </optgroup>
-        <optgroup label="ElevenLabs Multilingual">
+        <optgroup label="English Edge Neural">
+          <option value="edge-en-jenny">🌟 Jenny</option>
+          <option value="edge-en-guy">🌟 Guy</option>
+        </optgroup>
+        <optgroup label="ElevenLabs Multilingual v2">
           <option value="eleven-rachel">💎 Rachel (ElevenLabs)</option>
           <option value="eleven-adam">💎 Adam (ElevenLabs)</option>
           <option value="eleven-charlie">💎 Charlie (ElevenLabs)</option>
@@ -1136,9 +1164,14 @@
   }
 
   function setSpeed(newSpeed) {
-    state.speed = newSpeed;
+    state.speed = Math.max(0.5, Math.min(2.5, Math.round(newSpeed * 10) / 10));
+    chrome.storage?.local?.set({ guy_reader_speed: state.speed });
     if (state.audioElement) {
+      state.audioElement.defaultPlaybackRate = state.speed;
       state.audioElement.playbackRate = state.speed;
+    }
+    if (state.activeSourceNode && state.activeSourceNode.playbackRate) {
+      state.activeSourceNode.playbackRate.value = state.speed;
     }
     const valEl = document.getElementById('guy-speed-val');
     if (valEl) valEl.textContent = state.speed.toFixed(1) + 'x';

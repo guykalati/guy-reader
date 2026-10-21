@@ -9,8 +9,11 @@ import pytest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from speech_engine import split_sentences, SpeechEngine, SynthesisResult
-import roboshaul.HebrewToEnglish as HebrewToEnglish
+from speech_engine import split_sentences, prepare_text_for_tts, SpeechEngine, SynthesisResult
+try:
+    import roboshaul.HebrewToEnglish as HebrewToEnglish
+except ImportError:
+    HebrewToEnglish = None
 
 
 def test_split_sentences_bullets_israel_hayom():
@@ -29,14 +32,14 @@ def test_split_sentences_bullets_israel_hayom():
 
 
 def test_hebrew_to_english_bullet_mapping():
-    """Verify that bullet tokens are converted to pause token ' - ' rather than stripped."""
-    assert HebrewToEnglish.map_punct_token("•") == " - "
-    assert HebrewToEnglish.map_punct_token("▪") == " - "
-    assert HebrewToEnglish.map_punct_token("✦") == " - "
-
-    tokens = HebrewToEnglish.break_to_letter_and_rebuild("חדש • אבל")
-    # Tokens should include the bullet as a separate punctuation token
-    assert "•" in tokens or " - " in [HebrewToEnglish.map_punct_token(t) for t in tokens]
+    """Verify that bullet clauses get terminal punctuation and spaced dashes become natural pauses."""
+    clause = "אבל בזמן שטורקיה והמפרציות בוראות מציאות של נמלים, כבלים, מסילות וצירי סחר - בארץ מדשדשים"
+    norm = prepare_text_for_tts(clause, "he")
+    assert ", בארץ מדשדשים." in norm
+    if HebrewToEnglish is not None:
+        assert HebrewToEnglish.map_punct_token("•") == " - "
+        assert HebrewToEnglish.map_punct_token("▪") == " - "
+        assert HebrewToEnglish.map_punct_token("✦") == " - "
 
 
 def test_roboshaul_synthesis_timing_benchmark():

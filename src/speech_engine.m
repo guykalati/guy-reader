@@ -3,7 +3,218 @@
 #import <CommonCrypto/CommonDigest.h>
 
 static NSString *const kEdgeTrustedToken = @"6A5AA1D4EAFF4E9FB37E23D68491D6F4";
-static NSString *const kEdgeSecMsGecVersion = @"1-143.0.3650.75";
+static NSString *const kEdgeSecMsGecVersion = @"2-143.0.3650.75";
+
+static const uint32_t kSha256Initial[8] = {
+    0x6A09E667, 0xBB67AE85, 0x3C6EF372, 0xA54FF53A,
+    0x510E527F, 0x9B05688C, 0x1F83D9AB, 0x5BE0CD19
+};
+static const uint32_t kSha256State[8] = {
+    0xFD9FBEA2, 0x91243CE7, 0xBE499094, 0xCD2E1E0A,
+    0x6C006F49, 0x04BD35AB, 0xFEB0A7E4, 0x03EFFBD2
+};
+static const uint32_t kSha256Schedule[14] = {
+    0xEB24BF9E, 0x1558691F, 0xA0C09EE2, 0x0CFA32BA,
+    0xA622EE8C, 0xD1DD9491, 0xC0DD25A0, 0xF9E70AB6,
+    0xF0C31573, 0x7058CE4E, 0x7188E606, 0x00E5AB33,
+    0xD258B060, 0x72766564
+};
+static const uint32_t kSha256RoundConstants[64] = {
+    0x428A2F98, 0x71374491, 0xB5C0FBCF, 0xE9B5DBA5, 0x3956C25B, 0x59F111F1, 0x923F82A4, 0xAB1C5ED5,
+    0xD807AA98, 0x12835B01, 0x243185BE, 0x550C7DC3, 0x72BE5D74, 0x80DEB1FE, 0x9BDC06A7, 0xC19BF174,
+    0xE49B69C1, 0xEFBE4786, 0x0FC19DC6, 0x240CA1CC, 0x2DE92C6F, 0x4A7484AA, 0x5CB0A9DC, 0x76F988DA,
+    0x983E5152, 0xA831C66D, 0xB00327C8, 0xBF597FC7, 0xC6E00BF3, 0xD5A79147, 0x06CA6351, 0x14292967,
+    0x27B70A85, 0x2E1B2138, 0x4D2C6DFC, 0x53380D13, 0x650A7354, 0x766A0ABB, 0x81C2C92E, 0x92722C85,
+    0xA2BFE8A1, 0xA81A664B, 0xC24B8B70, 0xC76C51A3, 0xD192E819, 0xD6990624, 0xF40E3585, 0x106AA070,
+    0x19A4C116, 0x1E376C08, 0x2748774C, 0x34B0BCB5, 0x391C0CB3, 0x4ED8AA4A, 0x5B9CCA4F, 0x682E6FF3,
+    0x748F82EE, 0x78A5636F, 0x84C87814, 0x8CC70208, 0x90BEFFFA, 0xA4506CEB, 0xBEF9A3F7, 0xC67178F2
+};
+static const uint32_t kSha256Adjustment = 0xC9DC06A7;
+static const uint32_t kSha256Sigma0Adjustment = 0x059C0B80;
+static const uint32_t kSha256Sigma1Adjustment = 0x000B92C0;
+
+static const uint32_t kCs64Coefficients[14][2] = {
+    {0xE82E91B1, 0xB32700D0}, {0x44DE24C6, 0x88DFF51D},
+    {0x3BEB65BC, 0x29514038}, {0xC89C5933, 0xB328CBDF},
+    {0x8D1EC211, 0xD405B4D5}, {0x314EF5D5, 0x26E55F3C},
+    {0xE92491B1, 0x607801C6}, {0xF0A5B9D5, 0x82B2C1FB},
+    {0x06064CF3, 0xFA51A3DA}, {0xDA79FA60, 0x207CC464},
+    {0xBED20560, 0x3C3C74F3}, {0x89F9C9F8, 0xD2D14B61},
+    {0x35FA38C6, 0xBB04A2C1}, {0xCB49E3C6, 0xC5626167}
+};
+static const uint32_t kCs64Factor = 0x82893933;
+static const uint32_t kCs64Adjustment0 = 0xF2F90B1A;
+static const uint32_t kCs64Adjustment1 = 0x0B1A0000;
+
+static inline uint32_t Rol16(uint32_t v) { return (v << 16) | (v >> 16); }
+static inline uint32_t Rotr32(uint32_t v, int n) { return (v >> n) | (v << (32 - n)); }
+static inline uint32_t Sigma0(uint32_t v) { return Rotr32(v, 7) ^ Rotr32(v, 18) ^ (v >> 3); }
+static inline uint32_t Sigma1(uint32_t v) { return Rotr32(v, 17) ^ Rotr32(v, 19) ^ (v >> 10); }
+
+static void ExpandSha256Schedule(uint32_t words[64], int firstWord) {
+    for (int i = firstWord; i < 64; i++) {
+        words[i] = Sigma1(words[i - 2]) + words[i - 7] + Sigma0(words[i - 15]) + words[i - 16];
+    }
+}
+
+static void Sha256Rounds(uint32_t state[8], const uint32_t words[64], int firstRound) {
+    uint32_t a = state[0], b = state[1], c = state[2], d = state[3];
+    uint32_t e = state[4], f = state[5], g = state[6], h = state[7];
+    for (int i = firstRound; i < 64; i++) {
+        uint32_t k = (firstRound == 14 && i == 14) ? kSha256Adjustment : kSha256RoundConstants[i];
+        uint32_t S1 = Rotr32(e, 6) ^ Rotr32(e, 11) ^ Rotr32(e, 25);
+        uint32_t ch = g ^ (e & (f ^ g));
+        uint32_t t1 = h + S1 + ch + k + words[i];
+        uint32_t S0 = Rotr32(a, 2) ^ Rotr32(a, 13) ^ Rotr32(a, 22);
+        uint32_t maj = (a & b) | (c & (a | b));
+        uint32_t t2 = S0 + maj;
+        h = g; g = f; f = e; e = d + t1;
+        d = c; c = b; b = a; a = t1 + t2;
+    }
+    state[0] = a; state[1] = b; state[2] = c; state[3] = d;
+    state[4] = e; state[5] = f; state[6] = g; state[7] = h;
+}
+
+static void Sha256Init(const uint8_t data7[7], uint32_t outState[8]) {
+    uint32_t words[64] = {0};
+    words[14] = ((uint32_t)data7[0] << 16) | ((uint32_t)data7[1] << 8) | (uint32_t)data7[2];
+    words[15] = ((uint32_t)data7[3] << 24) | ((uint32_t)data7[4] << 16) | ((uint32_t)data7[5] << 8) | (uint32_t)data7[6];
+    for (int i = 16; i < 30; i++) {
+        uint32_t val = kSha256Schedule[i - 16];
+        if (i - 2 >= 14) {
+            val += (i == 16) ? (Sigma1(words[i - 2]) ^ kSha256Sigma1Adjustment) : Sigma1(words[i - 2]);
+        }
+        if (i - 7 >= 14) {
+            val += words[i - 7];
+        }
+        if (i - 15 >= 14) {
+            val += (i == 29) ? (Sigma0(words[i - 15]) ^ kSha256Sigma0Adjustment) : Sigma0(words[i - 15]);
+        }
+        words[i] = val;
+    }
+    words[30] = Sigma1(words[28]) + words[23] + Sigma0(words[15]) + words[14] + kSha256Adjustment - kSha256RoundConstants[14];
+    ExpandSha256Schedule(words, 31);
+    uint32_t working[8];
+    memcpy(working, kSha256State, sizeof(working));
+    Sha256Rounds(working, words, 14);
+    for (int i = 0; i < 8; i++) {
+        outState[i] = kSha256Initial[i] + working[i];
+    }
+}
+
+static void Sha256Digest(const uint8_t *data, size_t dataLen, uint8_t outDigest[32]) {
+    size_t length = 57 + dataLen;
+    size_t remLen = dataLen - 7;
+    size_t padZeroLen = (64 - ((length - 55) % 64)) % 64;
+    if ((55 - (ssize_t)length) % 64 != 0) {
+        ssize_t mod = (55 - (ssize_t)length) % 64;
+        if (mod < 0) mod += 64;
+        padZeroLen = (size_t)mod;
+    } else {
+        padZeroLen = 0;
+    }
+    size_t paddedLen = remLen + 1 + padZeroLen + 8;
+    uint8_t *padded = (uint8_t *)calloc(paddedLen, 1);
+    memcpy(padded, data + 7, remLen);
+    padded[remLen] = 0x80;
+    uint64_t bitLen = (uint64_t)length * 8ULL;
+    for (int i = 0; i < 8; i++) {
+        padded[paddedLen - 1 - i] = (uint8_t)((bitLen >> (i * 8)) & 0xFF);
+    }
+
+    uint32_t state[8];
+    Sha256Init(data, state);
+    for (size_t offset = 0; offset < paddedLen; offset += 64) {
+        uint32_t words[64] = {0};
+        for (int j = 0; j < 16; j++) {
+            const uint8_t *p = padded + offset + j * 4;
+            words[j] = ((uint32_t)p[0] << 24) | ((uint32_t)p[1] << 16) | ((uint32_t)p[2] << 8) | (uint32_t)p[3];
+        }
+        ExpandSha256Schedule(words, 16);
+        uint32_t working[8];
+        memcpy(working, state, sizeof(state));
+        Sha256Rounds(working, words, 0);
+        for (int j = 0; j < 8; j++) state[j] += working[j];
+    }
+    free(padded);
+    for (int i = 0; i < 8; i++) {
+        outDigest[i * 4 + 0] = (uint8_t)((state[i] >> 24) & 0xFF);
+        outDigest[i * 4 + 1] = (uint8_t)((state[i] >> 16) & 0xFF);
+        outDigest[i * 4 + 2] = (uint8_t)((state[i] >> 8) & 0xFF);
+        outDigest[i * 4 + 3] = (uint8_t)(state[i] & 0xFF);
+    }
+}
+
+static void Cs64Digest(const uint8_t *data, size_t dataLen, const uint8_t digest[32], uint8_t outCs64[8]) {
+    uint32_t keyA = ((uint32_t)digest[0] | ((uint32_t)digest[1] << 8) | ((uint32_t)digest[2] << 16) | ((uint32_t)digest[3] << 24)) | 1U;
+    uint32_t keyB = ((uint32_t)digest[4] | ((uint32_t)digest[5] << 8) | ((uint32_t)digest[6] << 16) | ((uint32_t)digest[7] << 24)) | 1U;
+    uint32_t factors[2] = { keyA * kCs64Factor, keyB * kCs64Factor };
+
+    size_t prefLen = 1 + dataLen;
+    size_t padLen = (4 - (prefLen % 4)) % 4;
+    size_t wordCount = (prefLen + padLen) / 4;
+    if (wordCount % 2 == 1) wordCount++;
+    uint8_t *prefixed = (uint8_t *)calloc(wordCount * 4, 1);
+    memcpy(prefixed + 1, data, dataLen);
+
+    size_t totalTerms = 14 + wordCount;
+    uint32_t *terms = (uint32_t *)calloc(totalTerms, sizeof(uint32_t));
+    uint32_t *offsets = (uint32_t *)calloc(totalTerms, sizeof(uint32_t));
+    for (int i = 0; i < 14; i++) {
+        terms[i] = kCs64Coefficients[i][0] * factors[i % 2];
+        offsets[i] = kCs64Coefficients[i][1];
+    }
+    for (size_t idx = 0; idx < wordCount; idx++) {
+        const uint8_t *p = prefixed + idx * 4;
+        uint32_t word = (uint32_t)p[0] | ((uint32_t)p[1] << 8) | ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
+        uint32_t term = word * ((idx % 2 == 0) ? keyA : keyB);
+        uint32_t offset = Rol16(word) * ((idx % 2 == 0) ? 0xEF0569FBU : 0xC31713DBU);
+        if (idx == 0) {
+            term += kCs64Adjustment0 * factors[0];
+            offset += kCs64Adjustment1;
+        }
+        terms[14 + idx] = term;
+        offsets[14 + idx] = offset;
+    }
+    free(prefixed);
+
+    uint32_t swapAcc = 0, swapLast = 0, state = 0, acc = 0;
+    for (size_t idx = 0; idx < totalTerms; idx += 2) {
+        uint32_t x = terms[idx], y = terms[idx + 1];
+        uint32_t t = Rol16(offsets[idx] + x);
+        uint32_t q = t * 0x76F50F34U;
+        swapAcc += Rol16(q) * 0xC3EFEA97U + q;
+        t = Rol16(offsets[idx + 1] + y);
+        q = t * 0x1881CE3CU;
+        swapLast = Rol16(q) * 0x35BD1EC9U + q;
+        swapAcc += swapLast;
+
+        state = state * keyA + x;
+        state = Rol16(state) * 0xCF98B111U;
+        state = Rol16(state) * 0x87085B9FU;
+        state = Rol16(state) * 0x12CEB96DU;
+        state = Rol16(state) * 0x257E1D83U;
+        acc += state;
+        t = state * keyB + y;
+        t = Rol16(t) * 0xA27416F5U;
+        t = Rol16(t) * 0xD38396FFU;
+        state = Rol16(Rol16(t) * 0x7C932B89U) * 0xBFA49F69U;
+        acc += state;
+    }
+    free(terms);
+    free(offsets);
+
+    uint32_t w0 = swapLast ^ state;
+    uint32_t w1 = swapAcc ^ acc;
+    outCs64[0] = (uint8_t)(w0 & 0xFF);
+    outCs64[1] = (uint8_t)((w0 >> 8) & 0xFF);
+    outCs64[2] = (uint8_t)((w0 >> 16) & 0xFF);
+    outCs64[3] = (uint8_t)((w0 >> 24) & 0xFF);
+    outCs64[4] = (uint8_t)(w1 & 0xFF);
+    outCs64[5] = (uint8_t)((w1 >> 8) & 0xFF);
+    outCs64[6] = (uint8_t)((w1 >> 16) & 0xFF);
+    outCs64[7] = (uint8_t)((w1 >> 24) & 0xFF);
+}
 
 static NSString *GenerateSecMsGec(void) {
     uint64_t WIN_EPOCH = 11644473600ULL;
@@ -12,13 +223,16 @@ static NSString *GenerateSecMsGec(void) {
     ticks -= (ticks % 300ULL);
     ticks *= 10000000ULL;
     NSString *strToHash = [NSString stringWithFormat:@"%llu%@", ticks, kEdgeTrustedToken];
-    const char *cStr = [strToHash UTF8String];
-    unsigned char digest[CC_SHA256_DIGEST_LENGTH];
-    CC_SHA256(cStr, (CC_LONG)strlen(cStr), digest);
-    NSMutableString *hex = [NSMutableString stringWithCapacity:CC_SHA256_DIGEST_LENGTH * 2];
-    for (int i = 0; i < CC_SHA256_DIGEST_LENGTH; i++) {
-        [hex appendFormat:@"%02X", digest[i]];
-    }
+    const uint8_t *cStr = (const uint8_t *)[strToHash UTF8String];
+    size_t len = strlen((const char *)cStr);
+    uint8_t digest[32];
+    Sha256Digest(cStr, len, digest);
+    uint8_t cs64[8];
+    Cs64Digest(cStr, len, digest, cs64);
+    NSMutableString *hex = [NSMutableString stringWithCapacity:81];
+    for (int i = 0; i < 8; i++) [hex appendFormat:@"%02X", cs64[i]];
+    [hex appendString:@"-"];
+    for (int i = 0; i < 32; i++) [hex appendFormat:@"%02X", digest[i]];
     return hex;
 }
 
