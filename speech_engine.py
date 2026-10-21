@@ -667,6 +667,34 @@ def reader_state():
     return browser_state
 
 
+@app.get("/extract-at-point")
+def extract_at_point(x: float = -1.0, y: float = -1.0, pid: int = 0):
+    """Extract screen text at (x, y) via ax_helper (inherits daemon TCC Accessibility permission)."""
+    import json
+    base_dir = Path(__file__).resolve().parent
+    helper = base_dir / "Guy_reader.app" / "Contents" / "MacOS" / "ax_helper"
+    if not helper.exists():
+        return {"status": "missing_helper", "trusted": False, "pid": pid, "text": ""}
+    try:
+        res = subprocess.run(
+            [str(helper), f"{x:.1f}", f"{y:.1f}", str(pid)],
+            capture_output=True,
+            text=True,
+            timeout=3.0,
+        )
+        if res.returncode == 0 and res.stdout.strip():
+            data = json.loads(res.stdout.strip())
+            return {
+                "status": "ok",
+                "trusted": bool(data.get("trusted", False)),
+                "pid": int(data.get("pid", pid)),
+                "text": str(data.get("text", "")),
+            }
+    except Exception as exc:
+        print(f"[SpeechEngine] extract_at_point error: {exc}")
+    return {"status": "error", "trusted": False, "pid": pid, "text": ""}
+
+
 @app.post("/trigger")
 async def trigger_endpoint(req: TriggerRequest):
     """Trigger command on connected browser companion extensions."""

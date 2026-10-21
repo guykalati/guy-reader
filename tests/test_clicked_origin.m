@@ -12,7 +12,11 @@ int main(void) {
   if (GRReadingSuffix(blocks, 8, 0) != nil || GRReadingSuffix(blocks, 1, 99) != nil) return 1;
   if (![GRPreferredReadingText(@"  exact highlight  ", @"clicked suffix", YES) isEqualToString:@"exact highlight"]) return 1;
   if (![GRPreferredReadingText(nil, @" clicked suffix ", YES) isEqualToString:@"clicked suffix"]) return 1;
-  puts("Clicked origin tests passed (5)");
+  NSArray *inlineBlocks = @[@"4", @".", @"Speed Button Fixed"];
+  if (![GRReadingSuffix(inlineBlocks, 0, 0) isEqualToString:@"4. Speed Button Fixed"]) {
+   fprintf(stderr,"FAIL: inline list number and period must stitch cleanly\n");return 1;
+  }
+  puts("Clicked origin tests passed (6)");
  }
  return 0;
 }

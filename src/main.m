@@ -182,6 +182,7 @@ static NSString *const kSmartExtractJS =
         AXUIElementRef frontAppElem = AXUIElementCreateApplication(front.processIdentifier);
         if (frontAppElem) {
             AXUIElementSetAttributeValue(frontAppElem, (CFStringRef)@"AXManualAccessibility", kCFBooleanTrue);
+            AXUIElementSetAttributeValue(frontAppElem, (CFStringRef)@"AXEnhancedUserInterface", kCFBooleanTrue);
             CFRelease(frontAppElem);
         }
     }
@@ -192,14 +193,22 @@ static NSString *const kSmartExtractJS =
     self.sourceClickMonitor = [NSEvent addGlobalMonitorForEventsMatchingMask:NSEventMaskLeftMouseUp handler:^(NSEvent *event) {
         __strong typeof(weakSelf) strongSelf = weakSelf;
         if (!strongSelf) return;
-        NSRunningApplication *front = NSWorkspace.sharedWorkspace.frontmostApplication;
-        if (!front || front.processIdentifier == NSProcessInfo.processInfo.processIdentifier) return;
-        strongSelf.lastTargetApp = front;
+
+        CGEventRef cgEvt = CGEventCreate(NULL);
+        CGPoint point = cgEvt ? CGEventGetLocation(cgEvt) : CGPointZero;
+        if (cgEvt) CFRelease(cgEvt);
+
+        pid_t selfPid = NSProcessInfo.processInfo.processIdentifier;
+        pid_t winPid = GRAppPIDAtScreenPoint(point, selfPid);
+        NSRunningApplication *target = winPid > 0 ? [NSRunningApplication runningApplicationWithProcessIdentifier:winPid] : nil;
+        if (!target || target.processIdentifier == selfPid) {
+            target = NSWorkspace.sharedWorkspace.frontmostApplication;
+        }
+        if (!target || target.processIdentifier == selfPid) return;
+
+        strongSelf.lastTargetApp = target;
         strongSelf.clickedReadingText = nil;
-        strongSelf.clickedAppPID = front.processIdentifier;
-        NSPoint mouse = NSEvent.mouseLocation;
-        CGFloat top = NSMaxY(NSScreen.screens.firstObject.frame);
-        CGPoint point = CGPointMake(mouse.x, top - mouse.y);
+        strongSelf.clickedAppPID = target.processIdentifier;
         strongSelf.clickedPoint = point;
         strongSelf.hasClickedPoint = YES;
         BOOL wasArmed = strongSelf.pointToReadArmed;
@@ -211,53 +220,32 @@ static NSString *const kSmartExtractJS =
         }
 
         // Wake up accessibility tree on target process (crucial for Electron and Chromium apps)
-        AXUIElementRef frontAppElem = AXUIElementCreateApplication(front.processIdentifier);
-        if (frontAppElem) {
-            AXUIElementSetAttributeValue(frontAppElem, (CFStringRef)@"AXManualAccessibility", kCFBooleanTrue);
-            CFRelease(frontAppElem);
+        AXUIElementRef targetAppElem = AXUIElementCreateApplication(target.processIdentifier);
+        if (targetAppElem) {
+            AXUIElementSetAttributeValue(targetAppElem, (CFStringRef)@"AXManualAccessibility", kCFBooleanTrue);
+            AXUIElementSetAttributeValue(targetAppElem, (CFStringRef)@"AXEnhancedUserInterface", kCFBooleanTrue);
+            CFRelease(targetAppElem);
         }
 
-        AXUIElementRef system = AXUIElementCreateSystemWide(), hit = NULL;
-        if (AXUIElementCopyElementAtPosition(system, point.x, point.y, &hit) == kAXErrorSuccess && hit) {
-            pid_t pid = 0; AXUIElementGetPid(hit, &pid);
-            if (pid > 0 && pid != front.processIdentifier) {
-                AXUIElementRef helperElem = AXUIElementCreateApplication(pid);
-                if (helperElem) {
-                    AXUIElementSetAttributeValue(helperElem, (CFStringRef)@"AXManualAccessibility", kCFBooleanTrue);
-                    CFRelease(helperElem);
-                }
-            }
-            NSRunningApplication *hitApp = [NSRunningApplication runningApplicationWithProcessIdentifier:pid];
-            BOOL belongsToFront = (pid == front.processIdentifier) ||
-                                  (hitApp == nil) ||
-                                  [hitApp.bundleIdentifier containsString:@"helper"] ||
-                                  [hitApp.bundleIdentifier containsString:@"electron"] ||
-                                  [hitApp.bundleIdentifier hasPrefix:front.bundleIdentifier] ||
-                                  [front.bundleIdentifier hasPrefix:hitApp.bundleIdentifier ?: @""];
-            if (belongsToFront) {
-                NSString *txt = GRReadingTextAtElement(hit, point);
-                if (txt.length) strongSelf.clickedReadingText = txt;
-            }
-            CFRelease(hit);
-        }
-        CFRelease(system);
-
-        // Follow-up at +120ms after AXManualAccessibility wakes up & caret settles
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.12 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        // Follow-up at +80ms after AXManualAccessibility wakes up & window/caret settles
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.08 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
             __strong typeof(weakSelf) sSelf = weakSelf;
             if (!sSelf) return;
-            if (!sSelf.clickedReadingText.length && sSelf.clickedAppPID == front.processIdentifier) {
-                AXUIElementRef sys2 = AXUIElementCreateSystemWide(), hit2 = NULL;
-                if (AXUIElementCopyElementAtPosition(sys2, point.x, point.y, &hit2) == kAXErrorSuccess && hit2) {
-                    NSString *txt2 = GRReadingTextAtElement(hit2, point);
-                    if (txt2.length) sSelf.clickedReadingText = txt2;
-                    CFRelease(hit2);
-                }
-                CFRelease(sys2);
-            }
             if (wasArmed) {
-                [sSelf readFromClickedPointInApp:front point:point];
+                [sSelf readFromClickedPointInApp:target point:point];
+                return;
             }
+            pid_t targetPid = target.processIdentifier;
+            dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
+                NSString *txt = [sSelf extractTextAtScreenPoint:point forPID:targetPid];
+                if (txt.length > 0) {
+                    dispatch_async(dispatch_get_main_queue(), ^{
+                        if (sSelf.clickedAppPID == targetPid && CGPointEqualToPoint(sSelf.clickedPoint, point)) {
+                            sSelf.clickedReadingText = txt;
+                        }
+                    });
+                }
+            });
         });
     }];
 
@@ -438,6 +426,7 @@ static NSString *const kSmartExtractJS =
         AXUIElementRef appElem = AXUIElementCreateApplication(app.processIdentifier);
         if (appElem) {
             AXUIElementSetAttributeValue(appElem, (CFStringRef)@"AXManualAccessibility", kCFBooleanTrue);
+            AXUIElementSetAttributeValue(appElem, (CFStringRef)@"AXEnhancedUserInterface", kCFBooleanTrue);
             CFRelease(appElem);
         }
     }
@@ -562,9 +551,40 @@ static NSString *const kSmartExtractJS =
     [self.webView evaluateJavaScript:js completionHandler:nil];
 }
 
+- (NSString *)extractTextAtScreenPoint:(CGPoint)point forPID:(pid_t)pid {
+    NSString *localText = GRExtractReadingTextAtScreenPoint(point, pid);
+    if (localText.length > 0) {
+        return localText;
+    }
+
+    // Fallback: query local speech_engine.py /extract-at-point (which invokes ax_helper with daemon TCC permissions)
+    NSString *urlStr = [NSString stringWithFormat:@"http://127.0.0.1:5050/extract-at-point?x=%.1f&y=%.1f&pid=%d", point.x, point.y, (int)pid];
+    NSURL *url = [NSURL URLWithString:urlStr];
+    if (!url) return nil;
+
+    NSMutableURLRequest *req = [NSMutableURLRequest requestWithURL:url];
+    req.timeoutInterval = 3.0;
+    dispatch_semaphore_t sem = dispatch_semaphore_create(0);
+    __block NSString *remoteText = nil;
+    [[[NSURLSession sharedSession] dataTaskWithRequest:req completionHandler:^(NSData *data, NSURLResponse *resp, NSError *err) {
+        if (!err && data.length > 0) {
+            NSDictionary *json = [NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
+            if ([json isKindOfClass:[NSDictionary class]]) {
+                NSString *t = json[@"text"];
+                if ([t isKindOfClass:[NSString class]] && t.length > 0) {
+                    remoteText = t;
+                }
+            }
+        }
+        dispatch_semaphore_signal(sem);
+    }] resume];
+    dispatch_semaphore_wait(sem, dispatch_time(DISPATCH_TIME_NOW, (int64_t)(3.2 * NSEC_PER_SEC)));
+    return remoteText;
+}
+
 - (void)readFromClickedPointInApp:(NSRunningApplication *)targetApp point:(CGPoint)point {
     if (!targetApp) return;
-    self.captureRevision++;
+    NSUInteger captureId = ++self.captureRevision;
 
     NSString *selection = [self getSelectedTextViaAccessibility:targetApp.processIdentifier];
     if (selection && [selection stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]].length > 0) {
@@ -577,43 +597,34 @@ static NSString *const kSmartExtractJS =
         return;
     }
 
-    AXUIElementRef system = AXUIElementCreateSystemWide(), hit = NULL;
-    if (AXUIElementCopyElementAtPosition(system, point.x, point.y, &hit) == kAXErrorSuccess && hit) {
-        NSString *txt = GRReadingTextAtElement(hit, point);
-        CFRelease(hit);
-        if (txt.length > 0) {
-            CFRelease(system);
-            self.clickedReadingText = txt;
-            [self deliverTextToReader:txt];
-            return;
-        }
-    }
-    CFRelease(system);
+    pid_t pid = targetApp.processIdentifier;
+    __weak typeof(self) weakSelf = self;
+    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_HIGH, 0), ^{
+        __strong typeof(weakSelf) strongSelf = weakSelf;
+        if (!strongSelf || strongSelf.captureRevision != captureId) return;
 
-    AXUIElementRef appElement = AXUIElementCreateApplication(targetApp.processIdentifier);
-    if (appElement) {
-        CFTypeRef focused = NULL;
-        if (AXUIElementCopyAttributeValue(appElement, kAXFocusedUIElementAttribute, &focused) == kAXErrorSuccess && focused) {
-            NSString *remaining = GRReadingTextAtElement((AXUIElementRef)focused, point);
-            CFRelease(focused);
-            if (remaining.length > 0) {
-                CFRelease(appElement);
-                [self deliverTextToReader:remaining];
+        NSString *extracted = [strongSelf extractTextAtScreenPoint:point forPID:pid];
+        dispatch_async(dispatch_get_main_queue(), ^{
+            __strong typeof(weakSelf) sSelf = weakSelf;
+            if (!sSelf || sSelf.captureRevision != captureId) return;
+
+            if (extracted.length > 0) {
+                sSelf.clickedReadingText = extracted;
+                [sSelf deliverTextToReader:extracted];
                 return;
             }
-        }
-        CFRelease(appElement);
-    }
 
-    NSString *bundle = targetApp.bundleIdentifier.lowercaseString ?: @"";
-    BOOL isBrowserApp = [bundle containsString:@"safari"] || [bundle containsString:@"chrome"] ||
-                        [bundle containsString:@"brave"] || [bundle containsString:@"edge"] ||
-                        [bundle containsString:@"arc"] || [bundle containsString:@"vivaldi"];
-    if (isBrowserApp) {
-        [self extractForegroundContentFromApp:targetApp];
-    } else {
-        [self captureDesktopAppText:targetApp];
-    }
+            NSString *bundle = targetApp.bundleIdentifier.lowercaseString ?: @"";
+            BOOL isBrowserApp = [bundle containsString:@"safari"] || [bundle containsString:@"chrome"] ||
+                                [bundle containsString:@"brave"] || [bundle containsString:@"edge"] ||
+                                [bundle containsString:@"arc"] || [bundle containsString:@"vivaldi"];
+            if (isBrowserApp) {
+                [sSelf extractForegroundContentFromApp:targetApp];
+            } else {
+                [sSelf captureDesktopAppText:targetApp];
+            }
+        });
+    });
 }
 
 - (void)readSelectionFromActiveApp {
@@ -675,23 +686,8 @@ static NSString *const kSmartExtractJS =
     // If clickedReadingText wasn't available at the instant of mouse-up (e.g. Electron/Chrome tree was still waking up),
     // perform hit-testing now at the remembered clickedPoint in targetApp:
     if (self.hasClickedPoint && targetApp && belongsToTarget(self.clickedAppPID, targetApp)) {
-        AXUIElementRef appElem = AXUIElementCreateApplication(targetApp.processIdentifier);
-        if (appElem) {
-            AXUIElementSetAttributeValue(appElem, (CFStringRef)@"AXManualAccessibility", kCFBooleanTrue);
-            CFRelease(appElem);
-        }
-        AXUIElementRef system = AXUIElementCreateSystemWide(), hit = NULL;
-        if (AXUIElementCopyElementAtPosition(system, self.clickedPoint.x, self.clickedPoint.y, &hit) == kAXErrorSuccess && hit) {
-            NSString *txt = GRReadingTextAtElement(hit, self.clickedPoint);
-            CFRelease(hit);
-            if (txt.length) {
-                CFRelease(system);
-                self.clickedReadingText = txt;
-                [self deliverTextToReader:txt];
-                return;
-            }
-        }
-        CFRelease(system);
+        [self readFromClickedPointInApp:targetApp point:self.clickedPoint];
+        return;
     }
 
     NSString *bundle = targetApp.bundleIdentifier.lowercaseString ?: @"";
@@ -1222,8 +1218,16 @@ static NSString *const kSmartExtractJS =
 }
 
 - (NSString *)extractTextFromAXWindow:(pid_t)pid {
+    CGPoint pt = self.hasClickedPoint ? self.clickedPoint : CGPointMake(-1, -1);
+    NSString *smartText = [self extractTextAtScreenPoint:pt forPID:pid];
+    if (smartText.length > 0) {
+        return smartText;
+    }
+
     AXUIElementRef app = AXUIElementCreateApplication(pid);
     if (!app) return nil;
+    AXUIElementSetAttributeValue(app, (CFStringRef)@"AXManualAccessibility", kCFBooleanTrue);
+    AXUIElementSetAttributeValue(app, (CFStringRef)@"AXEnhancedUserInterface", kCFBooleanTrue);
 
     AXUIElementRef window = NULL;
     if (AXUIElementCopyAttributeValue(app, kAXFocusedWindowAttribute, (CFTypeRef *)&window) != kAXErrorSuccess || !window) {

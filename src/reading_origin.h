@@ -10,4 +10,8 @@ FOUNDATION_EXPORT NSString * _Nullable GRPreferredReadingText(NSString * _Nullab
                                                                BOOL clickedAppMatches);
 // Read the clicked accessibility text and following blocks in its document/scroll area.
 FOUNDATION_EXPORT NSString * _Nullable GRReadingTextAtElement(AXUIElementRef element, CGPoint point);
+// Find the topmost normal application window PID at a Quartz screen coordinate.
+FOUNDATION_EXPORT pid_t GRAppPIDAtScreenPoint(CGPoint point, pid_t excludePID);
+// Wake accessibility and extract reading text at a Quartz screen coordinate for a target app PID.
+FOUNDATION_EXPORT NSString * _Nullable GRExtractReadingTextAtScreenPoint(CGPoint point, pid_t targetPID);
 NS_ASSUME_NONNULL_END

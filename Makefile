@@ -13,7 +13,11 @@ $(MACOS_DIR)/Guy_reader: src/main.m src/speech_engine.m src/speech_engine.h src/
 	@mkdir -p $(MACOS_DIR)
 	$(CC) $(CFLAGS) $(FRAMEWORKS) src/main.m src/speech_engine.m src/reading_origin.m -o $(MACOS_DIR)/Guy_reader
 
-bundle: $(MACOS_DIR)/Guy_reader
+$(MACOS_DIR)/ax_helper: src/ax_helper.m src/reading_origin.m src/reading_origin.h
+	@mkdir -p $(MACOS_DIR)
+	$(CC) $(CFLAGS) -framework Foundation -framework ApplicationServices -framework CoreGraphics src/reading_origin.m src/ax_helper.m -o $(MACOS_DIR)/ax_helper
+
+bundle: $(MACOS_DIR)/Guy_reader $(MACOS_DIR)/ax_helper
 	@mkdir -p $(RESOURCES_DIR)/ui
 	@cp src/Info.plist $(BUILD_DIR)/Info.plist
 	@cp -r src/ui/* $(RESOURCES_DIR)/ui/
