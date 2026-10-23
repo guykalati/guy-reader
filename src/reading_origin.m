@@ -158,6 +158,13 @@ static NSString *extractString(id val) {
     return nil;
 }
 
+static BOOL isBrowserTabNoise(NSString *str) {
+    if (!str || str.length == 0) return NO;
+    return [str containsString:@"- Memory usage -"] ||
+           [str containsString:@" - Part of group "] ||
+           [str hasSuffix:@" - Audio playing"];
+}
+
 static NSString *textValue(AXUIElementRef element) {
     if (!element) return nil;
     NSString *role = attribute(element, kAXRoleAttribute);
@@ -165,16 +172,17 @@ static NSString *textValue(AXUIElementRef element) {
     if ([role isEqualToString:@"AXButton"] || [role isEqualToString:@"AXToolbar"] ||
         [role isEqualToString:@"AXMenuBar"] || [role isEqualToString:@"AXMenu"] ||
         [role isEqualToString:@"AXScrollBar"] || [role isEqualToString:@"AXSlider"] ||
-        [role isEqualToString:@"AXTabGroup"] || [role isEqualToString:@"AXImage"]) return nil;
+        [role isEqualToString:@"AXTabGroup"] || [role isEqualToString:@"AXRadioButton"] ||
+        [role isEqualToString:@"AXImage"]) return nil;
 
     NSString *str = extractString(attribute(element, kAXValueAttribute));
-    if (str) return str;
+    if (str && !isBrowserTabNoise(str)) return str;
     str = extractString(attribute(element, kAXTitleAttribute));
-    if (str) return str;
+    if (str && !isBrowserTabNoise(str)) return str;
     str = extractString(attribute(element, kAXDescriptionAttribute));
-    if (str) return str;
+    if (str && !isBrowserTabNoise(str)) return str;
     str = extractString(attribute(element, kAXHelpAttribute));
-    if (str) return str;
+    if (str && !isBrowserTabNoise(str)) return str;
     return nil;
 }
 
@@ -185,6 +193,7 @@ static void collect(AXUIElementRef element, NSMutableArray *elements, NSMutableA
     if ([role isEqualToString:@"AXToolbar"] ||
         [role isEqualToString:@"AXMenuBar"] || [role isEqualToString:@"AXMenu"] ||
         [role isEqualToString:@"AXScrollBar"] || [role isEqualToString:@"AXSlider"] ||
+        [role isEqualToString:@"AXTabGroup"] || [role isEqualToString:@"AXRadioButton"] ||
         [role isEqualToString:@"AXImage"]) return;
 
     NSString *text = textValue(element);
@@ -676,11 +685,11 @@ NSString *GRExtractReadingTextAtScreenPoint(CGPoint point, pid_t targetPID) {
     // 2. Hit-test at the clicked screen coordinate
     NSString *result = nil;
     if (hasPoint) {
-        result = hitTestPointInApplication(appElem, system, point, targetPID);
-        if (!result.length) {
-            // Electron/Chromium may need ~80ms after AXManualAccessibility is first enabled
-            usleep(80000);
+        useconds_t delays[] = {0, 80000, 140000, 180000};
+        for (size_t d = 0; d < sizeof(delays) / sizeof(delays[0]); d++) {
+            if (delays[d] > 0) usleep(delays[d]);
             result = hitTestPointInApplication(appElem, system, point, targetPID);
+            if (result.length > 0) break;
         }
     }
 

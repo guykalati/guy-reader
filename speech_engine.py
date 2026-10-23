@@ -123,7 +123,8 @@ def prepare_text_for_tts(text: str, lang: str) -> str:
     """Normalize punctuation, spaced dashes, bullets, and abbreviations for natural TTS prosody."""
     if not text:
         return text
-    out = text.strip()
+    import unicodedata
+    out = unicodedata.normalize("NFKC", text.strip())
     if lang == "he":
         out = expand_hebrew_abbreviations(out)
     # Normalize spaced dashes (e.g. "צירי סחר - בארץ מדשדשים" or "word - word") into a comma pause
@@ -668,31 +669,74 @@ def reader_state():
 
 
 @app.get("/extract-at-point")
-def extract_at_point(x: float = -1.0, y: float = -1.0, pid: int = 0):
-    """Extract screen text at (x, y) via ax_helper (inherits daemon TCC Accessibility permission)."""
+async def extract_at_point(x: float = -1.0, y: float = -1.0, pid: int = 0):
+    """Extract screen text at (x, y) via ax_helper (with browser companion extension fallback)."""
     import json
     base_dir = Path(__file__).resolve().parent
     helper = base_dir / "Guy_reader.app" / "Contents" / "MacOS" / "ax_helper"
-    if not helper.exists():
-        return {"status": "missing_helper", "trusted": False, "pid": pid, "text": ""}
-    try:
-        res = subprocess.run(
-            [str(helper), f"{x:.1f}", f"{y:.1f}", str(pid)],
-            capture_output=True,
-            text=True,
-            timeout=3.0,
-        )
-        if res.returncode == 0 and res.stdout.strip():
-            data = json.loads(res.stdout.strip())
-            return {
-                "status": "ok",
-                "trusted": bool(data.get("trusted", False)),
-                "pid": int(data.get("pid", pid)),
-                "text": str(data.get("text", "")),
-            }
-    except Exception as exc:
-        print(f"[SpeechEngine] extract_at_point error: {exc}")
-    return {"status": "error", "trusted": False, "pid": pid, "text": ""}
+    trusted = False
+    extracted_text = ""
+
+    if helper.exists():
+        try:
+            res = await asyncio.to_thread(
+                subprocess.run,
+                [str(helper), f"{x:.1f}", f"{y:.1f}", str(pid)],
+                capture_output=True,
+                text=True,
+                timeout=3.0,
+            )
+            if res.returncode == 0 and res.stdout.strip():
+                data = json.loads(res.stdout.strip())
+                trusted = bool(data.get("trusted", False))
+                pid = int(data.get("pid", pid))
+                extracted_text = str(data.get("text", "")).strip()
+                if extracted_text:
+                    return {
+                        "status": "ok",
+                        "trusted": trusted,
+                        "pid": pid,
+                        "text": extracted_text,
+                    }
+        except Exception as exc:
+            print(f"[SpeechEngine] extract_at_point error: {exc}")
+
+    # Fallback: if ax_helper returned empty text (e.g. untrusted AX or browser DOM not exposed)
+    # and a browser companion extension is connected on /ws, query its last clicked DOM point!
+    if connected_extensions:
+        ws = active_extension if active_extension in connected_extensions else next(iter(connected_extensions))
+        request_id = uuid.uuid4().hex
+        future = asyncio.get_running_loop().create_future()
+        pending_commands[request_id] = (ws, future)
+        expires_at = int((time.time() + 1.2) * 1000)
+        try:
+            await ws.send_json({
+                "event": "command",
+                "action": "extract-clicked-text",
+                "requestId": request_id,
+                "expiresAt": expires_at,
+            })
+            cmd_res = await asyncio.wait_for(future, timeout=1.2)
+            ext_text = str(cmd_res.get("text", "")).strip() if isinstance(cmd_res, dict) else ""
+            if ext_text:
+                return {
+                    "status": "ok",
+                    "trusted": True,
+                    "source": "extension",
+                    "pid": pid,
+                    "text": ext_text,
+                }
+        except (TimeoutError, RuntimeError, WebSocketDisconnect):
+            pass
+        finally:
+            pending_commands.pop(request_id, None)
+
+    return {
+        "status": "ok" if helper.exists() else "missing_helper",
+        "trusted": trusted,
+        "pid": pid,
+        "text": extracted_text,
+    }
 
 
 @app.post("/trigger")
@@ -710,7 +754,8 @@ async def trigger_endpoint(req: TriggerRequest):
         await ws.send_json({"event": "command", "action": req.action, "mode": req.mode,
                             "voice": req.voice,
                             "requestId": request_id, "expiresAt": expires_at})
-        handled = await asyncio.wait_for(future, timeout=1.5)
+        cmd_res = await asyncio.wait_for(future, timeout=1.5)
+        handled = bool(cmd_res.get("success")) if isinstance(cmd_res, dict) else bool(cmd_res)
         return {"status": "ok" if handled else "no_extension", "dispatched": int(handled)}
     except (TimeoutError, RuntimeError, WebSocketDisconnect):
         return {"status": "no_extension", "dispatched": 0}
@@ -781,7 +826,10 @@ async def websocket_endpoint(websocket: WebSocket):
             elif action == "command-result":
                 pending = pending_commands.get(data.get("requestId"))
                 if pending and pending[0] is websocket and not pending[1].done():
-                    pending[1].set_result(data.get("success") is True)
+                    pending[1].set_result({
+                        "success": data.get("success") is True,
+                        "text": str(data.get("text", "") or ""),
+                    })
 
             elif action == "reader-state":
                 if active_extension is None or active_extension is websocket:

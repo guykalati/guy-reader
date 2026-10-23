@@ -44,6 +44,8 @@
     btnPointRead: document.getElementById('btnPointRead'),
     pointReadLabel: document.getElementById('pointReadLabel'),
     langTag: document.getElementById('langTag'),
+    pillProgressBadge: document.getElementById('pillProgressBadge'),
+    pillProgressFill: document.getElementById('pillProgressFill'),
     previewZone: document.getElementById('previewZone'),
     previewText: document.getElementById('previewText'),
     btnSpeedDown: document.getElementById('btnSpeedDown'),
@@ -95,9 +97,24 @@
     dragZone: document.getElementById('dragZone')
   };
 
-  let userWidth = 460;
+  let userWidth = 660;
   let userExpandedHeight = 360;
   let userCompactHeight = 60;
+
+  function updatePillProgress(current, total) {
+    if (dom.pillProgressBadge) {
+      if (total > 0 && current > 0) {
+        dom.pillProgressBadge.textContent = `${current}/${total}`;
+        dom.pillProgressBadge.style.display = 'inline-block';
+      } else {
+        dom.pillProgressBadge.style.display = 'none';
+      }
+    }
+    if (dom.pillProgressFill) {
+      const pct = (total > 0 && current > 0) ? Math.min(100, Math.round((current / total) * 100)) : 0;
+      dom.pillProgressFill.style.width = `${pct}%`;
+    }
+  }
 
   // Helpers
   function isHebrew(text) {
@@ -310,6 +327,7 @@
       const he = isHebrew(sentence);
       dom.langTag.textContent = he ? 'HE' : 'EN';
       dom.langTag.className = 'lang-tag' + (he ? ' hebrew' : '');
+      updatePillProgress(index + 1, state.sentences.length);
       const counter = `[${index + 1}/${state.sentences.length}]`;
       dom.previewText.innerHTML = `<span style="color:var(--accent-lime);font-weight:700;margin-right:5px;">${counter}</span> ${escapeHtml(sentence)}`;
       dom.previewText.className = 'preview-text' + (he ? ' rtl' : '');
@@ -338,10 +356,8 @@
     clearPrebufferCache();
 
     renderSentences();
-
-    // Auto-open reader drawer to reveal synchronized sentence highlighting
-    if (!state.drawerOpen) {
-      toggleDrawer(true);
+    if (state.sentences.length > 0) {
+      updatePillProgress(1, state.sentences.length);
     }
 
     if (autoStart && state.sentences.length > 0) {
@@ -415,6 +431,7 @@
       const he = isHebrew(textToSpeak);
       dom.langTag.textContent = he ? 'HE' : 'EN';
       dom.langTag.className = 'lang-tag' + (he ? ' hebrew' : '');
+      updatePillProgress(index + 1, state.sentences.length);
       const counter = `[${index + 1}/${state.sentences.length}]`;
       dom.previewText.innerHTML = `<span style="color:var(--accent-lime);font-weight:700;margin-right:5px;">${counter}</span> ${escapeHtml(textToSpeak)}`;
       dom.previewText.className = 'preview-text' + (he ? ' rtl' : '');
@@ -818,6 +835,7 @@
     state.previewFinish = null;
     state.isPlaying = false;
     state.isPaused = false;
+    updatePillProgress(0, 0);
     setPlayPauseUI(false);
   }
 
@@ -866,12 +884,12 @@
         const dh = isCorner ? (ev.screenY - lastY) : 0;
         lastX = ev.screenX;
         lastY = ev.screenY;
-        userWidth = Math.max(360, Math.min(1200, userWidth + dw));
+        userWidth = Math.max(540, Math.min(1200, userWidth + dw));
         if (isCorner) {
           if (state.drawerOpen) {
             userExpandedHeight = Math.max(160, Math.min(900, userExpandedHeight + dh));
           } else {
-            userCompactHeight = Math.max(48, Math.min(140, userCompactHeight + dh));
+            userCompactHeight = Math.max(56, Math.min(140, userCompactHeight + dh));
           }
         }
         notifyNative('resizeWindowDelta', { dw, dh });
@@ -1129,7 +1147,7 @@
     if (dom.previewStatus) dom.previewStatus.textContent = 'Ready';
 
     // Expand window so settings modal fits completely without clipping
-    notifyNative('resizeWindow', { height: 460, width: 480 });
+    notifyNative('resizeWindow', { height: 460, width: userWidth });
     dom.settingsModal.style.display = 'flex';
   }
 
@@ -1249,8 +1267,12 @@
       if (!state.browserActive) return;
       state.isPaused = status.paused;
       setPlayPauseUI(status.playing);
+      if (typeof status.index === 'number' && typeof status.total === 'number' && status.total > 0) {
+        updatePillProgress(status.index + 1, status.total);
+      }
       if (!status.playing && !status.paused) {
         state.browserActive = false;
+        updatePillProgress(0, 0);
         dom.previewText.textContent = 'Browser reading finished. Click text, then Read.';
       }
     },

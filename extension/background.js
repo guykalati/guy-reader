@@ -524,14 +524,15 @@ function connectBridgeWebSocket() {
           }
           const [activeTab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
           const transport = ['pause','resume','stop'].includes(data.action);
+          const isExtractOnly = data.action === 'extract-clicked-text';
           const tabId = transport ? (readingTabId || activeTab?.id) : activeTab?.id;
           let response = null;
           if (tabId) {
-            if (!transport && readingTabId && readingTabId !== tabId) {
+            if (!transport && !isExtractOnly && readingTabId && readingTabId !== tabId) {
               try { await chrome.tabs.sendMessage(readingTabId, {action:'stop'}); } catch (_) {}
               readingTabId = null;
             }
-            if (!transport) readingTabId = tabId;
+            if (!transport && !isExtractOnly) readingTabId = tabId;
             const tabMsg = {action:data.action || 'read-from-selection', voice:data.voice, expiresAt:data.expiresAt};
             try {
               if (!expired()) response = await chrome.tabs.sendMessage(tabId, tabMsg);
@@ -545,10 +546,10 @@ function connectBridgeWebSocket() {
               }
             }
           }
-          if ((!response?.success || expired()) && !transport && readingTabId === tabId) readingTabId = null;
+          if ((!response?.success || expired()) && !transport && !isExtractOnly && readingTabId === tabId) readingTabId = null;
           if (response?.success && data.action === 'stop') readingTabId = null;
           if (bridgeSocket?.readyState === WebSocket.OPEN) bridgeSocket.send(JSON.stringify({
-            action:'command-result', requestId:data.requestId, success:response?.success === true && !expired()
+            action:'command-result', requestId:data.requestId, success:response?.success === true && !expired(), text:response?.text || ''
           }));
         }
       } catch (err) {

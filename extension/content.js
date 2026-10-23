@@ -440,6 +440,32 @@
     }, true);
   }
 
+  function extractClickedOrSelectedText() {
+    const selection = window.getSelection?.();
+    const selText = selection && !selection.isCollapsed ? selection.toString().trim() : '';
+    if (selText.length > 0) return selText;
+
+    state.sentences = extractArticleData();
+    if (!state.sentences || state.sentences.length === 0) return '';
+
+    let startIndex = 0, startOffset = 0;
+    const point = pointPosition(state.lastPoint);
+    if (point) {
+      startIndex = point.index;
+      startOffset = point.offset;
+    } else {
+      startIndex = getSelectionSentenceIndex(state.sentences);
+    }
+
+    const parts = [];
+    for (let i = startIndex; i < state.sentences.length; i++) {
+      const s = state.sentences[i]?.text || '';
+      if (!s) continue;
+      parts.push(i === startIndex && startOffset > 0 ? s.slice(startOffset).trim() : s);
+    }
+    return parts.filter(Boolean).join(' ').trim();
+  }
+
   // 5. Speech Playback Core
   function startReading(fromSelection = true) {
     stopReading();
@@ -1356,6 +1382,9 @@
     } else if (msg.action === 'read-from-selection') {
       startReading(true);
       sendResponse({ success: state.isPlaying });
+    } else if (msg.action === 'extract-clicked-text') {
+      const text = extractClickedOrSelectedText();
+      sendResponse({ success: Boolean(text && text.length > 0), text: text || '' });
     } else if (msg.action === 'toggle-pill') {
       showFloatingPill();
       sendResponse({ success: true });

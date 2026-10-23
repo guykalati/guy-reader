@@ -341,76 +341,11 @@ static NSString *const kSmartExtractJS =
     if (self.hasStoppedEngine) return;
     self.hasStoppedEngine = YES;
 
-    NSLog(@"[GuyReader] Stopping speech engine daemon...");
-
-    // 1. Send graceful shutdown request to HTTP /shutdown endpoint
-    NSURL *shutdownUrl = [NSURL URLWithString:@"http://127.0.0.1:5050/shutdown"];
-    NSMutableURLRequest *req = [NSMutableURLRequest requestWithURL:shutdownUrl];
-    req.HTTPMethod = @"POST";
-    req.timeoutInterval = 0.4;
-    dispatch_semaphore_t sem = dispatch_semaphore_create(0);
-    [[[NSURLSession sharedSession] dataTaskWithRequest:req completionHandler:^(NSData *data, NSURLResponse *resp, NSError *err) {
-        dispatch_semaphore_signal(sem);
-    }] resume];
-    dispatch_semaphore_wait(sem, dispatch_time(DISPATCH_TIME_NOW, (int64_t)(250 * NSEC_PER_MSEC)));
-
-    // 2. Terminate the launched NSTask process if running
-    if (self.speechEngineTask) {
-        @try {
-            pid_t pid = [self.speechEngineTask processIdentifier];
-            if (self.speechEngineTask.isRunning) {
-                [self.speechEngineTask terminate];
-                for (int i = 0; i < 10 && self.speechEngineTask.isRunning; i++) {
-                    usleep(50000); // 50ms * 10 = 500ms max
-                }
-                if (self.speechEngineTask.isRunning && pid > 0) {
-                    kill(pid, SIGKILL);
-                }
-            }
-        } @catch (NSException *ex) {
-            NSLog(@"[GuyReader] Exception terminating speechEngineTask: %@", ex);
-        }
-        self.speechEngineTask = nil;
-    }
-
-    // 3. Read PID file(s) and terminate if still alive
-    NSString *appBundlePath = [[NSBundle mainBundle] bundlePath];
-    NSString *workspaceDir = [appBundlePath stringByDeletingLastPathComponent];
-    NSArray *pidPaths = @[
-        [workspaceDir stringByAppendingPathComponent:@"speech_engine.pid"],
-        @"/Users/gyklty/Desktop/Guy/TTS/speech_engine.pid",
-        [NSTemporaryDirectory() stringByAppendingPathComponent:@"guy_reader_speech_engine.pid"],
-        @"/tmp/guy_reader_speech_engine.pid"
-    ];
-    for (NSString *pidPath in pidPaths) {
-        if ([[NSFileManager defaultManager] fileExistsAtPath:pidPath]) {
-            NSString *pidStr = [NSString stringWithContentsOfFile:pidPath encoding:NSUTF8StringEncoding error:nil];
-            if (pidStr) {
-                pid_t pid = (pid_t)[pidStr integerValue];
-                if (pid > 1) {
-                    kill(pid, SIGTERM);
-                    usleep(50000);
-                    if (kill(pid, 0) == 0) {
-                        kill(pid, SIGKILL);
-                    }
-                }
-            }
-            [[NSFileManager defaultManager] removeItemAtPath:pidPath error:nil];
-        }
-    }
-
-    // 4. Fallback pkill to guarantee no orphaned speech_engine.py is running
-    @try {
-        NSTask *pkillTask = [[NSTask alloc] init];
-        pkillTask.launchPath = @"/usr/bin/pkill";
-        pkillTask.arguments = @[@"-f", @"speech_engine.py"];
-        pkillTask.standardOutput = [NSFileHandle fileHandleWithNullDevice];
-        pkillTask.standardError = [NSFileHandle fileHandleWithNullDevice];
-        [pkillTask launch];
-        [pkillTask waitUntilExit];
-    } @catch (NSException *ex) {
-        // ignore
-    }
+    // Keep the local speech_engine.py daemon warm in the background across app restarts:
+    // 1. It preserves TCC Accessibility (AXIsProcessTrusted) for ax_helper when Guy_reader.app is closed and reopened.
+    // 2. It keeps Kokoro-82M warm in RAM for instant synthesis and serves the browser companion extension.
+    NSLog(@"[GuyReader] Detaching from background speech engine daemon (keeping warm on port 5050)...");
+    self.speechEngineTask = nil;
 }
 
 - (void)applicationWillTerminate:(NSNotification *)notification {
@@ -485,7 +420,7 @@ static NSString *const kSmartExtractJS =
     NSScreen *screen = [NSScreen mainScreen];
     NSRect screenRect = screen ? screen.visibleFrame : NSMakeRect(0, 0, 1440, 900);
 
-    CGFloat initWidth = 520.0;
+    CGFloat initWidth = 660.0;
     CGFloat initHeight = 60.0;
     CGFloat initX = screenRect.origin.x + (screenRect.size.width - initWidth) / 2.0;
     CGFloat initY = screenRect.origin.y + screenRect.size.height - initHeight - 40.0;
@@ -503,7 +438,7 @@ static NSString *const kSmartExtractJS =
     self.panel.opaque = NO;
     self.panel.hasShadow = YES;
     self.panel.movableByWindowBackground = YES;
-    self.panel.minSize = NSMakeSize(440, 48);
+    self.panel.minSize = NSMakeSize(540, 56);
     self.panel.maxSize = NSMakeSize(1200, 900);
 
     // Setup WebKit
@@ -1412,7 +1347,7 @@ static NSString *const kSmartExtractJS =
         CGFloat height = [body[@"height"] doubleValue];
         CGFloat width = [body[@"width"] doubleValue];
         if (height <= 0) height = 60.0;
-        if (width <= 0) width = 460.0;
+        if (width <= 0) width = 660.0;
 
         NSRect frame = self.panel.frame;
         CGFloat diffY = height - frame.size.height;
@@ -1439,8 +1374,8 @@ static NSString *const kSmartExtractJS =
         CGFloat dw = [body[@"dw"] doubleValue];
         CGFloat dh = [body[@"dh"] doubleValue];
         NSRect frame = self.panel.frame;
-        CGFloat newWidth = MAX(360.0, MIN(1200.0, frame.size.width + dw));
-        CGFloat newHeight = MAX(48.0, MIN(900.0, frame.size.height + dh));
+        CGFloat newWidth = MAX(540.0, MIN(1200.0, frame.size.width + dw));
+        CGFloat newHeight = MAX(56.0, MIN(900.0, frame.size.height + dh));
         CGFloat diffY = newHeight - frame.size.height;
         frame.size.width = newWidth;
         frame.size.height = newHeight;
